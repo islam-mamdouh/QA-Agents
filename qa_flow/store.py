@@ -81,12 +81,14 @@ class RunStore:
         self.state["steps"] = {k: v for k, v in self.state["steps"].items() if not k.startswith(prefix)}
         self._save()
 
-    def add_usage(self, model: str, usage) -> None:
-        totals = self.state["usage"].setdefault(model, {"calls": 0, "input": 0, "output": 0, "cache_read": 0})
-        totals["calls"] += 1
-        totals["input"] += getattr(usage, "input_tokens", 0) or 0
-        totals["output"] += getattr(usage, "output_tokens", 0) or 0
-        totals["cache_read"] += getattr(usage, "cache_read_input_tokens", 0) or 0
+    def add_usage(self, model: str, usage: dict, cost: float = 0) -> None:
+        """Add one call's token usage (the "usage" object of Claude Code's JSON output)."""
+        totals = self.state["usage"].setdefault(model, {})
+        for key, field in (("input", "input_tokens"), ("cache_write", "cache_creation_input_tokens"),
+                           ("cache_read", "cache_read_input_tokens"), ("output", "output_tokens")):
+            totals[key] = totals.get(key, 0) + (usage.get(field, 0) or 0)
+        totals["calls"] = totals.get("calls", 0) + 1
+        totals["cost_usd"] = round(totals.get("cost_usd", 0) + (cost or 0), 4)
         self._save()
 
     # ---- artifacts ------------------------------------------------------

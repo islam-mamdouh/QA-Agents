@@ -41,12 +41,19 @@ Review loop exit: the reviewer finds no **major** issues, or `max_review_rounds`
 
 ## Setup
 
+The agents run through the **Claude Code CLI** with your Claude login (Pro/Max subscription).
+No Anthropic API key is needed. Install Claude Code and log in once:
+
+```bash
+claude            # then type /login and follow the steps
+```
+
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 # edit projects/zatca/config.md and projects/atlobha/config.md
-python3 run.py check --project zatca     # tests Claude, Jira and Google Sheets access
-python3 run.py check --project atlobha   # tests Claude, Linear and Google Sheets access
+python3 run.py check --project zatca     # tests Claude Code login, Jira and Google Sheets access
+python3 run.py check --project atlobha   # tests Claude Code login, Linear and Google Sheets access
 ```
 
 Google Sheets: create a service account in Google Cloud, enable the Google Sheets API,
@@ -168,7 +175,7 @@ projects/<name>/runs/<run-id>/
   report.md         local copy of the report, including quality KPIs and Pareto
   bug_reports.md    bug report drafts for every failed case
   incidents.md      retries, fire-backs, review limits, failures
-  state.json        checkpoint: step status, review round, token usage
+  state.json        checkpoint: step status, review round, token usage per model
   artifacts/        JSON output of every step
 ```
 
@@ -177,8 +184,11 @@ projects/<name>/runs/<run-id>/
 - **Checkpoints / failover**: every step and every review round is saved (atomic writes).
   After a crash, `Ctrl+C` or an error, `resume` continues from the exact point - finished
   batches and rounds are never paid for twice.
-- **Retries**: network errors, rate limits (429) and server errors (5xx) from Claude, Jira, Linear and
-  Google Sheets are retried with exponential backoff (`api_retries`), honouring `Retry-After`.
+- **Retries**: temporary Claude Code errors and timeouts, plus network errors, rate limits (429) and
+  server errors (5xx) from Jira, Linear and Google Sheets, are retried with exponential backoff
+  (`api_retries`), honouring `Retry-After`.
+- **Claude usage limit / not logged in**: the run stops with a clear message instead of retrying.
+  Log in (`claude`, then /login) or wait for the limit to reset, then `resume`.
 - **Fire-back**: if an agent's reply is not valid JSON or misses required content (e.g. a story
   was skipped), its reply is sent back with the problem to fix (`max_fire_back`).
 - **Incidents**: one table per run in `incidents.md`; failures also write `last_error.txt`.
@@ -191,7 +201,9 @@ projects/<name>/runs/<run-id>/
   not full analyses; dependent stories are passed as key + summary only).
 - Work is batched by story, so each call and each revision stays small.
 - A revision gets the input + its last output + reviewer issues, not the whole history.
-- System prompts are cached (prompt caching).
+- Each agent call runs `claude -p` with the agent's own system prompt and no tools, MCP servers,
+  settings or CLAUDE.md, so only the agent prompt and its input are sent.
+- Repeated system prompts are cached automatically by Claude Code.
 - Test case IDs, statistics and sheet formatting are done in Python; only rows with notes
   or failures go to the report agent.
 

@@ -8,12 +8,11 @@ read from your shell, from `.env` in this folder, or from `.env` in the reposito
 Relative paths (secrets, runs) are relative to this folder.
 
 ```yaml
-# Leave this section out (or api_key empty) to use the credentials already active for the
-# Claude Code CLI harness (ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN env var, or an
-# `ant auth login` profile) - no separate API key needed. Set api_key only to use a
-# different key than the CLI's.
-anthropic:
-  api_key: ""
+# Agents run through the Claude Code CLI with your Claude login (subscription), no API key.
+# Log in once: run `claude`, then /login. Check with: python3 run.py check --project <name>
+claude_code:
+  command: claude               # path to the Claude Code CLI if it is not on PATH
+  timeout_seconds: 900          # max time for one agent call
 
 source: jira                    # where the stories come from: jira | linear
 
