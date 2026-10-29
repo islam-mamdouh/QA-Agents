@@ -80,6 +80,7 @@ def load_config(project: str) -> dict:
             raise ConfigError(f"Missing section '{section}' in {path}")
 
     cfg["project"] = project
+    cfg["claude_code"] = {"command": "claude", "timeout_seconds": 900, **(cfg.get("claude_code") or {})}
     cfg["flow"] = {**FLOW_DEFAULTS, **(cfg.get("flow") or {})}
     cfg["flow"]["runs_dir"] = _in_project(folder, cfg["flow"]["runs_dir"])
     sheets = cfg["google_sheets"]
@@ -98,12 +99,3 @@ def require(cfg: dict, dotted: str):
         raise ConfigError(f"'{dotted}' is empty in the project's config.md (or its environment variable is not set)")
     return node
 
-
-def anthropic_api_key(cfg: dict):
-    """Return the configured API key, or None to let the Anthropic SDK resolve credentials itself.
-
-    None makes the SDK fall back to ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN, then the active
-    `ant auth login` profile - the same credentials the Claude Code CLI harness already uses.
-    Leave `anthropic.api_key` empty in config.md to use that; set it to use a specific key instead.
-    """
-    return (cfg.get("anthropic") or {}).get("api_key") or None

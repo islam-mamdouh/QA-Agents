@@ -17,15 +17,16 @@ Without --run, the project's latest run is used.
 import argparse
 import sys
 import traceback
+from pathlib import Path
 
 from qa_flow import linear_agent
-from qa_flow.config import ConfigError, anthropic_api_key, load_config, project_names, require
+from qa_flow.config import ConfigError, load_config, project_names, require
+from qa_flow.llm import LLM
 from qa_flow.orchestrator import Orchestrator
 from qa_flow.store import RunStore
 
 
 def cmd_check(cfg: dict) -> None:
-    import anthropic
     import gspread
     import requests
 
@@ -36,11 +37,13 @@ def cmd_check(cfg: dict) -> None:
         except Exception as error:  # noqa: BLE001 - report any problem
             print(f"  FAIL  {name}: {str(error)[:200]}")
 
-    # api_key=None lets the SDK fall back to the active CLI/OAuth credentials
-    # (same resolution the Claude Code CLI harness uses) when config.md has none set.
-    client = anthropic.Anthropic(api_key=anthropic_api_key(cfg))
-    check(f"Claude main model ({cfg['models']['main']})", lambda: client.models.retrieve(cfg["models"]["main"]))
-    check(f"Claude reviewer model ({cfg['models']['reviewer']})", lambda: client.models.retrieve(cfg["models"]["reviewer"]))
+    # One tiny real call per model through Claude Code, using your Claude login.
+    # Its usage and incidents are kept in a separate "_checks" folder, not in a real run.
+    llm = LLM(cfg, RunStore(Path(cfg["flow"]["runs_dir"]) / "_checks"))
+    for role in ("main", "reviewer"):
+        model = cfg["models"][role]
+        check(f"Claude Code, {role} model ({model})",
+              lambda: llm.ask_json(model, 'Reply with ONLY this JSON: {"ok":true}', "ping", "check"))
 
     def jira():
         r = requests.get(require(cfg, "jira.base_url").rstrip("/") + "/rest/api/3/myself", timeout=30,
@@ -63,7 +66,9 @@ def cmd_status(store: RunStore) -> None:
         extra = f" round={step['round']} {step.get('phase')}" if "round" in step else ""
         print(f"  {key:<24} {step.get('status'):<8}{extra}")
     for model, u in s["usage"].items():
-        print(f"  tokens {model}: calls={u['calls']} in={u['input']} out={u['output']} cached={u['cache_read']}")
+        print(f"  {model}: calls={u.get('calls', 0)} input={u.get('input', 0)} cache_write={u.get('cache_write', 0)} "
+              f"cache_read={u.get('cache_read', 0)} output={u.get('output', 0)} "
+              f"(API-equivalent cost ${u.get('cost_usd', 0)}, not billed on a subscription)")
     print(f"  incidents: {store.incidents.count()} (see {store.incidents.path})")
 
 

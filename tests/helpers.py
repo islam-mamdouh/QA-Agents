@@ -1,10 +1,6 @@
 """Shared test helpers. The Claude and Google libraries are not needed to run the tests."""
-import sys
 import tempfile
-import types
 from pathlib import Path
-
-sys.modules.setdefault("anthropic", types.ModuleType("anthropic"))  # llm.py only uses it at call time
 
 
 class FakeIncidents:
