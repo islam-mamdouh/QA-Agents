@@ -1,0 +1,10 @@
+config.md
+.env
+secrets/
+runs/
+__pycache__/
+*.pyc
+.venv/
+escaped_defects.csv
+monthly/
+.DS_Store
