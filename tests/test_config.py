@@ -18,36 +18,33 @@ project_context: |
 
 class ConfigTest(unittest.TestCase):
     def setUp(self):
-        self.root = temp_dir()
-        (self.root / "zatca").mkdir()
-        (self.root / "zatca" / "config.md").write_text(CONFIG.format(section="jira"))
-        (self.root / "zatca" / ".env").write_text("TEST_SECRET=from-project-env\n")
-        (self.root / "empty").mkdir()
-        self.patch = mock.patch.object(config, "PROJECTS", self.root)
+        self.folder = temp_dir() / "zatca"
+        self.folder.mkdir()
+        (self.folder / "config.md").write_text(CONFIG.format(section="jira"))
+        (self.folder / ".env").write_text("TEST_SECRET=from-folder-env\n")
+        self.patch = mock.patch.object(config, "FOLDER", self.folder)
         self.patch.start()
 
     def tearDown(self):
         self.patch.stop()
 
-    def test_lists_only_folders_with_config(self):
-        self.assertEqual(config.project_names(), ["zatca"])
-
-    def test_paths_are_relative_to_project_and_env_is_read(self):
-        cfg = config.load_config("zatca")
-        self.assertEqual(cfg["flow"]["runs_dir"], str((self.root / "zatca" / "runs").resolve()))
+    def test_paths_are_relative_to_folder_and_env_is_read(self):
+        cfg = config.load_config()
+        self.assertEqual(cfg["flow"]["runs_dir"], str((self.folder / "runs").resolve()))
         self.assertTrue(cfg["google_sheets"]["service_account_file"].endswith("zatca/secrets/sa.json"))
-        self.assertEqual(cfg["jira"]["api_key"], "from-project-env")
+        self.assertEqual(cfg["jira"]["api_key"], "from-folder-env")
         self.assertTrue(cfg["flow"]["strict_results"])
         self.assertEqual(cfg["project_context"], "Context line")
 
     def test_jira_section_is_required(self):
-        (self.root / "zatca" / "config.md").write_text(CONFIG.format(section="linear"))
+        (self.folder / "config.md").write_text(CONFIG.format(section="other"))
         with self.assertRaises(config.ConfigError):
-            config.load_config("zatca")
+            config.load_config()
 
-    def test_missing_project(self):
+    def test_missing_config(self):
         with self.assertRaises(config.ConfigError):
-            config.load_config("nope")
+            (self.folder / "config.md").unlink()
+            config.load_config()
 
 
 if __name__ == "__main__":

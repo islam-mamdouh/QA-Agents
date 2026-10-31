@@ -22,7 +22,6 @@ def temp_dir() -> Path:
 
 def base_cfg(runs_dir: Path | None = None) -> dict:
     return {
-        "project": "test",
         "models": {"main": "main-model", "reviewer": "review-model", "max_tokens": 1000},
         "jira": {"base_url": "https://jira", "email": "e", "api_token": "t", "jql": "q",
                  "dependency_link_types": ["blocks"]},
