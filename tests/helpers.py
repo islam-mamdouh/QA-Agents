@@ -20,13 +20,12 @@ def temp_dir() -> Path:
     return Path(tempfile.mkdtemp())
 
 
-def base_cfg(runs_dir: Path | None = None, source: str = "jira") -> dict:
+def base_cfg(runs_dir: Path | None = None) -> dict:
     return {
-        "project": "test", "source": source,
+        "project": "test",
         "models": {"main": "main-model", "reviewer": "review-model", "max_tokens": 1000},
         "jira": {"base_url": "https://jira", "email": "e", "api_token": "t", "jql": "q",
                  "dependency_link_types": ["blocks"]},
-        "linear": {"api_key": "k", "team_key": "ATL", "states": ["Todo"], "max_stories": 50},
         "google_sheets": {"worksheet_prefix": "T"},
         "project_context": "test product",
         "flow": {"max_review_rounds": 2, "max_fire_back": 1, "api_retries": 1, "analysis_batch_size": 5,

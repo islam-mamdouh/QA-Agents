@@ -9,12 +9,10 @@ Relative paths (secrets, runs) are relative to this folder.
 
 ```yaml
 # Agents run through the Claude Code CLI with your Claude login (subscription), no API key.
-# Log in once: run `claude`, then /login. Check with: python3 run.py check --project <name>
+# Log in once: run `claude`, then /login. Check with: python3 run.py check
 claude_code:
   command: claude               # path to the Claude Code CLI if it is not on PATH
   timeout_seconds: 900          # max time for one agent call
-
-source: jira                    # where the stories come from: jira | linear
 
 models:
   main: claude-opus-5           # story analysis, test plan, test cases, report
