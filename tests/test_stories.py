@@ -7,17 +7,17 @@ from qa_flow import jira_agent
 class JiraTest(unittest.TestCase):
     def test_rich_text_to_plain_text(self):
         adf = {"type": "doc", "content": [
-            {"type": "paragraph", "content": [{"type": "text", "text": "As a user I pay"}]},
+            {"type": "paragraph", "content": [{"type": "text", "text": "As a taxpayer I issue an invoice"}]},
             {"type": "bulletList", "content": [{"type": "listItem", "content": [
                 {"type": "paragraph", "content": [{"type": "text", "text": "AC one"}]}]}]}]}
-        self.assertEqual(jira_agent.adf_to_text(adf), "As a user I pay\n- AC one")
+        self.assertEqual(jira_agent.adf_to_text(adf), "As a taxpayer I issue an invoice\n- AC one")
 
     def test_fetch_orders_by_dependency(self):
         issues = [
-            {"key": "Z-3", "fields": {"summary": "Checkout", "issuelinks": [
+            {"key": "Z-3", "fields": {"summary": "Report simplified invoice", "issuelinks": [
                 {"type": {"name": "Blocks"}, "inwardIssue": {"key": "Z-1"}}]}},
-            {"key": "Z-1", "fields": {"summary": "Cart", "description": "x" * 3000}},
-            {"key": "Z-2", "fields": {"summary": "Login", "issuelinks": [
+            {"key": "Z-1", "fields": {"summary": "Generate invoice QR code", "description": "x" * 3000}},
+            {"key": "Z-2", "fields": {"summary": "Onboard device (CSID)", "issuelinks": [
                 {"type": {"name": "Blocks"}, "inwardIssue": {"key": "Z-99"}}]}},
         ]
         original = jira_agent._post

@@ -16,7 +16,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from qa_flow.config import DEFAULT_PROJECT, ConfigError, load_config, require
+from qa_flow.config import ConfigError, load_config, require
 from qa_flow.llm import LLM
 from qa_flow.orchestrator import Orchestrator
 from qa_flow.store import RunStore
@@ -84,7 +84,6 @@ def cmd_monthly(cfg: dict, month: str | None) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["check", "design", "resume", "report", "status", "monthly"])
-    parser.add_argument("--project", default=DEFAULT_PROJECT, help=argparse.SUPPRESS)  # folder under projects/
     parser.add_argument("--run", help="run id (folder name in projects/zatca/runs/); default: latest")
     parser.add_argument("--jql", help="override the JQL from config.md (design only)")
     parser.add_argument("--month", help="monthly only: YYYY-MM; default: the current month")
@@ -92,7 +91,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        cfg = load_config(args.project)
+        cfg = load_config()
     except ConfigError as error:
         print(f"Config error: {error}")
         return 2

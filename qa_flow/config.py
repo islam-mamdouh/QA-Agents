@@ -6,8 +6,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-PROJECTS = ROOT / "projects"
-DEFAULT_PROJECT = "zatca"
+FOLDER = ROOT / "projects" / "zatca"   # config.md, .env, secrets/, runs/ for the ZATCA project
 
 FLOW_DEFAULTS = {
     "max_review_rounds": 3,
@@ -47,23 +46,17 @@ def _expand_env(value):
     return value
 
 
-def project_names() -> list:
-    """Projects are folders under projects/ that contain a config.md."""
-    return sorted(p.name for p in PROJECTS.glob("*") if (p / "config.md").exists())
-
-
-def _in_project(folder: Path, value: str) -> str:
-    """Relative paths in a project's config.md are relative to that project's folder."""
+def _in_folder(value: str) -> str:
+    """Relative paths in config.md are relative to projects/zatca/."""
     path = Path(value).expanduser()
-    return str(path if path.is_absolute() else (folder / path).resolve())
+    return str(path if path.is_absolute() else (FOLDER / path).resolve())
 
 
-def load_config(project: str) -> dict:
-    folder = PROJECTS / project
-    path = folder / "config.md"
+def load_config() -> dict:
+    path = FOLDER / "config.md"
     if not path.exists():
-        raise ConfigError(f"{path} not found. Copy {folder / 'config.example.md'} to config.md and fill it in.")
-    _load_dotenv(folder / ".env")   # project secrets first, so they win over the shared .env
+        raise ConfigError(f"{path} not found. Copy {FOLDER / 'config.example.md'} to config.md and fill it in.")
+    _load_dotenv(FOLDER / ".env")   # projects/zatca/.env first, so it wins over the root .env
     _load_dotenv(ROOT / ".env")
 
     text = path.read_text(encoding="utf-8")
@@ -76,13 +69,12 @@ def load_config(project: str) -> dict:
         if section not in cfg:
             raise ConfigError(f"Missing section '{section}' in {path}")
 
-    cfg["project"] = project
     cfg["claude_code"] = {"command": "claude", "timeout_seconds": 900, **(cfg.get("claude_code") or {})}
     cfg["flow"] = {**FLOW_DEFAULTS, **(cfg.get("flow") or {})}
-    cfg["flow"]["runs_dir"] = _in_project(folder, cfg["flow"]["runs_dir"])
+    cfg["flow"]["runs_dir"] = _in_folder(cfg["flow"]["runs_dir"])
     sheets = cfg["google_sheets"]
     if sheets.get("service_account_file"):
-        sheets["service_account_file"] = _in_project(folder, sheets["service_account_file"])
+        sheets["service_account_file"] = _in_folder(sheets["service_account_file"])
     cfg["project_context"] = (cfg.get("project_context") or "").strip()
     return cfg
 
@@ -93,6 +85,6 @@ def require(cfg: dict, dotted: str):
     for part in dotted.split("."):
         node = node.get(part) if isinstance(node, dict) else None
     if node in (None, ""):
-        raise ConfigError(f"'{dotted}' is empty in the project's config.md (or its environment variable is not set)")
+        raise ConfigError(f"'{dotted}' is empty in projects/zatca/config.md (or its environment variable is not set)")
     return node
 
