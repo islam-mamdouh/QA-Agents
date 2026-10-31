@@ -1,4 +1,4 @@
-"""Loads projects/<name>/config.md (a YAML block inside markdown) and fills ${ENV_VAR} values."""
+"""Loads projects/zatca/config.md (a YAML block inside markdown) and fills ${ENV_VAR} values."""
 import os
 import re
 from pathlib import Path
@@ -7,7 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 PROJECTS = ROOT / "projects"
-SOURCES = ("jira", "linear")
+DEFAULT_PROJECT = "zatca"
 
 FLOW_DEFAULTS = {
     "max_review_rounds": 3,
@@ -72,10 +72,7 @@ def load_config(project: str) -> dict:
         raise ConfigError(f"No ```yaml block found in {path}")
     cfg = _expand_env(yaml.safe_load(match.group(1)) or {})
 
-    cfg["source"] = cfg.get("source") or "jira"
-    if cfg["source"] not in SOURCES:
-        raise ConfigError(f"'source' must be one of {', '.join(SOURCES)} in {path}")
-    for section in ("models", cfg["source"], "google_sheets"):
+    for section in ("models", "jira", "google_sheets"):
         if section not in cfg:
             raise ConfigError(f"Missing section '{section}' in {path}")
 

@@ -1,13 +1,13 @@
 """Monthly quality report: all finished runs of a month + the defects that escaped to production.
 
-  python3 run.py monthly --project zatca [--month 2026-11]
+  python3 run.py monthly [--month 2026-11]
 
 Inputs
 - every run of the project whose report finished in that month (runs/<id>/artifacts/report_data.json)
-- projects/<name>/escaped_defects.csv: bugs found after release (by users, support or production
+- projects/zatca/escaped_defects.csv: bugs found after release (by users, support or production
   monitoring). You keep this file; it is created empty the first time.
 
-Output (projects/<name>/monthly/<month>/): monthly_report.md, metrics.json and a Google Sheets tab.
+Output (projects/zatca/monthly/<month>/): monthly_report.md, metrics.json and a Google Sheets tab.
 It includes KPIs with the change from last month, defect leakage, a control chart of failures
 per run, Pareto by root cause and an automatic process audit (internal audit, ISO 19011 style).
 """

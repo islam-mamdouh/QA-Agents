@@ -1,4 +1,4 @@
-"""One retry helper shared by Claude, Jira, Linear and Google Sheets calls."""
+"""One retry helper shared by Claude, Jira and Google Sheets calls."""
 import time
 
 

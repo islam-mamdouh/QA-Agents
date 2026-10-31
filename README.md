@@ -1,22 +1,16 @@
-# QA Agents — manual testing workflow
+# QA Agents — ZATCA manual testing workflow
 
-Multi-agent workflow that turns Jira or Linear stories into reviewed manual test cases, then
-turns your execution results into a professional report in Google Sheets.
+Multi-agent workflow for the ZATCA e-invoicing project. It turns Jira stories into reviewed
+manual test cases, then turns your execution results into a professional report in Google Sheets.
 
-One engine serves several projects. Each project has its own folder with its own config,
-credentials, Google Sheet and run history, so nothing is shared between them:
-
-```
-projects/
-  zatca/      config.md (Jira)    .env  secrets/  runs/  monthly/  escaped_defects.csv
-  atlobha/    config.md (Linear)  .env  secrets/  runs/  monthly/  escaped_defects.csv
-```
-
-To add a project, create `projects/<name>/`, copy a `config.example.md` into it as `config.md`
-and edit it.
+Config, credentials, Google Sheet settings and run history live in one folder:
 
 ```
-Stories agent: Jira or Linear (Python, 0 tokens)
+projects/zatca/   config.md  .env  secrets/  runs/  monthly/  escaped_defects.csv
+```
+
+```
+Jira agent (Python, 0 tokens)
    │ stories + dependency order
    ▼
 Orchestrator ──► Story analysis (Opus) ⇄ Reviewer (Sonnet)     per batch: scenarios, risk rating, questions
@@ -51,34 +45,29 @@ claude            # then type /login and follow the steps
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-# edit projects/zatca/config.md and projects/atlobha/config.md
-python3 run.py check --project zatca     # tests Claude Code login, Jira and Google Sheets access
-python3 run.py check --project atlobha   # tests Claude Code login, Linear and Google Sheets access
+cp projects/zatca/config.example.md projects/zatca/config.md   # then edit it
+python3 run.py check     # tests Claude Code login, Jira and Google Sheets access
 ```
 
 Google Sheets: create a service account in Google Cloud, enable the Google Sheets API,
-download its JSON key to `projects/<name>/secrets/service_account.json`, and share that
-project's spreadsheet with the service account's email as Editor.
+download its JSON key to `projects/zatca/secrets/service_account.json`, and share the
+spreadsheet with the service account's email as Editor.
 
-Linear: create a personal API key (Settings > Security & access) and put it in
-`projects/atlobha/.env` as `LINEAR_API_KEY=...`. The `linear` section picks the team, the
-active cycle, states and labels. Linear "blocks" relations become story dependencies.
+Jira: create an API token (Atlassian account > Security > API tokens) and put it in
+`projects/zatca/.env` as `JIRA_API_TOKEN=...`.
 
 ## Usage
 
 | Command | What it does |
 |---------|--------------|
-| `python3 run.py design --project zatca` | New run: steps 1-13. Ends with `test_cases.md` and `results.csv` |
-| `python3 run.py design --project zatca --jql "key in (ZT-1, ZT-2)"` | Same, for specific Jira stories |
-| `python3 run.py design --project atlobha --keys ATL-1,ATL-2` | Same, for specific Linear issues |
-| `python3 run.py report --project zatca` | Reads your `results.csv` and writes the report (steps 14-15) |
-| `python3 run.py resume --project zatca` | Continues a stopped or failed run from its last checkpoint |
-| `python3 run.py status --project zatca` | Steps, review rounds, token usage, incident count |
-| `python3 run.py monthly --project zatca` | Monthly quality report for the current month (`--month 2026-11` for another) |
+| `python3 run.py design` | New run: steps 1-13. Ends with `test_cases.md` and `results.csv` |
+| `python3 run.py design --jql "key in (ZT-1, ZT-2)"` | Same, for specific Jira stories |
+| `python3 run.py report` | Reads your `results.csv` and writes the report (steps 14-15) |
+| `python3 run.py resume` | Continues a stopped or failed run from its last checkpoint |
+| `python3 run.py status` | Steps, review rounds, token usage, incident count |
+| `python3 run.py monthly` | Monthly quality report for the current month (`--month 2026-11` for another) |
 
-Every command needs `--project`.
-
-Add `--run <run-id>` to target a run other than the project's latest. `--results <file>` reads results
+Add `--run <run-id>` to target a run other than the latest. `--results <file>` reads results
 from another CSV.
 
 ### Before testing: requirement gaps
@@ -88,7 +77,7 @@ CSV and set `status` to `open`, `answered` or `closed`. Answers you entered are 
 runs again. Each gap caught here is a defect prevented before testing.
 
 ### Recording results
-Open `projects/<name>/runs/<run-id>/results.csv` (Excel or Google Sheets, save as CSV). For each test case
+Open `projects/zatca/runs/<run-id>/results.csv` (Excel or Google Sheets, save as CSV). For each test case
 fill `status` (Pass, Fail, Blocked, Skipped; empty = Not Run), `actual_result`, `bug_id`,
 `notes` — in your own words, the report agent rewrites them professionally.
 
@@ -144,15 +133,15 @@ Partially executed, Blocked, Failed, Passed). It is written after design and upd
 ## Monthly quality report
 
 ```bash
-python3 run.py monthly --project zatca                  # current month
-python3 run.py monthly --project zatca --month 2026-11
+python3 run.py monthly                  # current month
+python3 run.py monthly --month 2026-11
 ```
 
 Add every bug found **after release** (by users, support, production) to
-`projects/<name>/escaped_defects.csv` (created empty the first time):
+`projects/zatca/escaped_defects.csv` (created empty the first time):
 `date` (YYYY-MM-DD), `bug_id`, `title`, `severity`, `story`, `root_cause`, `found_by`, `notes`.
 
-The report (`projects/<name>/monthly/<month>/monthly_report.md` and a **Monthly** tab) contains:
+The report (`projects/zatca/monthly/<month>/monthly_report.md` and a **Monthly** tab) contains:
 - KPIs with last month's value: pass rate, coverage, defects found, **defect leakage**
   (escaped / all defects), **defect detection effectiveness**, gaps, rejection and reopen rates.
 - **Control chart** (c-chart) of failed cases per run, with the centre line and 3-sigma limits;
@@ -165,7 +154,7 @@ For the manual part of the audit use `templates/monthly_audit_checklist.md`.
 ## Run folder
 
 ```
-projects/<name>/runs/<run-id>/
+projects/zatca/runs/<run-id>/
   stories.md        stories with dependencies (step 1)
   test_plan.md      approved test plan
   test_cases.md     test cases to run
@@ -185,7 +174,7 @@ projects/<name>/runs/<run-id>/
   After a crash, `Ctrl+C` or an error, `resume` continues from the exact point - finished
   batches and rounds are never paid for twice.
 - **Retries**: temporary Claude Code errors and timeouts, plus network errors, rate limits (429) and
-  server errors (5xx) from Jira, Linear and Google Sheets, are retried with exponential backoff
+  server errors (5xx) from Jira and Google Sheets, are retried with exponential backoff
   (`api_retries`), honouring `Retry-After`.
 - **Claude usage limit / not logged in**: the run stops with a clear message instead of retrying.
   Log in (`claude`, then /login) or wait for the limit to reset, then `resume`.
@@ -195,7 +184,7 @@ projects/<name>/runs/<run-id>/
 
 ## Token savings
 
-- Jira/Linear fetching and dependency ordering are plain Python (no LLM).
+- Jira fetching and dependency ordering are plain Python (no LLM).
 - Jira rich text is converted to plain text, long descriptions are trimmed, empty fields dropped.
 - Agents receive compact JSON and only what they need (e.g. the test plan gets scenario titles,
   not full analyses; dependent stories are passed as key + summary only).
@@ -213,8 +202,8 @@ projects/<name>/runs/<run-id>/
 |-----------|------|
 | What an agent does | `prompts/<agent>.md` |
 | What a reviewer checks | `prompts/review_<stage>.md` (shared rules: `reviewer_base.md`) |
-| Models, batch sizes, rounds, retries, product context | `projects/<name>/config.md` |
-| Where stories come from | `qa_flow/jira_agent.py`, `qa_flow/linear_agent.py` |
+| Models, batch sizes, rounds, retries, product context | `projects/zatca/config.md` |
+| Where stories come from | `qa_flow/jira_agent.py` |
 | Step order / flow | `qa_flow/orchestrator.py` |
 | Markdown output layout | `qa_flow/render.py` |
 | Sheet columns and style | `qa_flow/sheets.py` |
@@ -230,7 +219,7 @@ If you change a prompt's JSON output format, update the matching `check_*` valid
 
 ## Tests
 
-The tool is tested itself: configuration, Jira and Linear parsing, results checks, risk, KPIs,
+The tool is tested itself: configuration, Jira parsing, results checks, risk, KPIs,
 Pareto, traceability, monthly report, Google Sheets output and a full design-to-report run with
 fake agents. No network, Claude or Google access is needed.
 

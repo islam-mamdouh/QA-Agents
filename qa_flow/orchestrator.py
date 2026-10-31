@@ -1,7 +1,7 @@
 """Orchestrator: runs the agents in order, owns the review loops and the checkpoints.
 
 Design phase (steps 1-13):
-  01 stories agent (Jira or Linear) -> 02 story analysis (+review) -> 03 test plan (+review) -> 04 test cases (+review)
+  01 Jira agent -> 02 story analysis (+review) -> 03 test plan (+review) -> 04 test cases (+review)
   -> outputs test_cases.md and results.csv, then pauses for manual execution.
 Report phase (steps 14-15), started by `python3 run.py report`:
   05 report rows -> 06 report summary -> 07 Google Sheets.
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import render
 from .agents import Agents
-from . import jira_agent, linear_agent
+from . import jira_agent
 from .llm import LLM
 from .quality import compute_quality
 from .risk import check_risk, rate
@@ -138,19 +138,13 @@ class Orchestrator:
         return draft
 
     # ---- design phase: steps 1-13 ----------------------------------------
-    def _fetch_stories(self, query):
-        """query: a JQL string (Jira) or a list of issue keys (Linear); None = use config.md."""
-        if self.cfg["source"] == "linear":
-            return linear_agent.fetch_stories(self.cfg, self.store, query)
-        return jira_agent.fetch_stories(self.cfg, self.store, query)
-
     def design(self, query=None) -> None:
         self.store.set(phase="design", status="running")
 
-        data = self._step("01_stories", lambda: self._fetch_stories(query))
+        data = self._step("01_stories", lambda: jira_agent.fetch_stories(self.cfg, self.store, query))
         stories, order = data["stories"], data["order"]
         if not order:
-            raise WorkflowError(f"{self.cfg['source'].capitalize()} returned no stories for this filter.")
+            raise WorkflowError("Jira returned no stories for this JQL.")
         self.store.write_text("stories.md", render.stories_md(stories, order))
         print(f"   {len(order)} stories, dependency order: {', '.join(order)}")
 
@@ -175,7 +169,7 @@ class Orchestrator:
               f"\n  record answers in {self.store.dir / 'requirement_gaps.csv'}")
         print(f"\nDone. Read:   {self.store.dir / 'test_cases.md'}"
               f"\nFill in:      {results}"
-              f"\nThen run:     python3 run.py report --project {self.cfg['project']} --run {self.store.dir.name}")
+              f"\nThen run:     python3 run.py report --run {self.store.dir.name}")
 
     def _analysis(self, stories: dict, order: list) -> dict:
         analysis = {}

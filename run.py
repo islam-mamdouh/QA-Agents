@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
-"""QA agents - command line. Every command needs --project (a folder under projects/).
+"""QA agents for the ZATCA project - command line.
 
-  python3 run.py check  --project P                 test config, Claude, Jira/Linear and Google Sheets access
-  python3 run.py design --project P [--jql "..."] [--keys K1,K2]
-                                                    new run: stories -> analysis -> plan -> test cases (steps 1-13)
-  python3 run.py resume --project P [--run ID]      continue a stopped run from its last checkpoint
-  python3 run.py report --project P [--run ID] [--results FILE]
-                                                    your results -> report -> Google Sheets (steps 14-15)
-  python3 run.py status --project P [--run ID]      show steps, review rounds, tokens and incidents
-  python3 run.py monthly --project P [--month YYYY-MM]
-                                                    monthly quality report: KPIs and trend, defect leakage,
+  python3 run.py check                              test config, Claude Code login, Jira and Google Sheets access
+  python3 run.py design [--jql "..."]               new run: stories -> analysis -> plan -> test cases (steps 1-13)
+  python3 run.py resume [--run ID]                  continue a stopped run from its last checkpoint
+  python3 run.py report [--run ID] [--results FILE] your results -> report -> Google Sheets (steps 14-15)
+  python3 run.py status [--run ID]                  show steps, review rounds, tokens and incidents
+  python3 run.py monthly [--month YYYY-MM]          monthly quality report: KPIs and trend, defect leakage,
                                                     control chart, Pareto, process audit
 
-Without --run, the project's latest run is used.
+Config, credentials and runs live in projects/zatca/. Without --run, the latest run is used.
 """
 import argparse
 import sys
 import traceback
 from pathlib import Path
 
-from qa_flow import linear_agent
-from qa_flow.config import ConfigError, load_config, project_names, require
+from qa_flow.config import DEFAULT_PROJECT, ConfigError, load_config, require
 from qa_flow.llm import LLM
 from qa_flow.orchestrator import Orchestrator
 from qa_flow.store import RunStore
@@ -49,10 +45,7 @@ def cmd_check(cfg: dict) -> None:
         r = requests.get(require(cfg, "jira.base_url").rstrip("/") + "/rest/api/3/myself", timeout=30,
                          auth=(require(cfg, "jira.email"), require(cfg, "jira.api_token")))
         r.raise_for_status()
-    if cfg["source"] == "linear":
-        check("Linear login", lambda: linear_agent.check_login(cfg))
-    else:
-        check("Jira login", jira)
+    check("Jira login", jira)
     check("Google Sheet access", lambda: gspread.service_account(
         filename=require(cfg, "google_sheets.service_account_file")).open_by_key(require(cfg, "google_sheets.spreadsheet_id")))
 
@@ -91,11 +84,9 @@ def cmd_monthly(cfg: dict, month: str | None) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["check", "design", "resume", "report", "status", "monthly"])
-    parser.add_argument("--project", required=True,
-                        help=f"project folder under projects/ ({', '.join(project_names()) or 'none set up yet'})")
-    parser.add_argument("--run", help="run id (folder name in projects/<project>/runs/); default: latest")
-    parser.add_argument("--jql", help="Jira projects: override the JQL from config.md (design only)")
-    parser.add_argument("--keys", help="Linear projects: comma-separated issue keys instead of the config filter (design only)")
+    parser.add_argument("--project", default=DEFAULT_PROJECT, help=argparse.SUPPRESS)  # folder under projects/
+    parser.add_argument("--run", help="run id (folder name in projects/zatca/runs/); default: latest")
+    parser.add_argument("--jql", help="override the JQL from config.md (design only)")
     parser.add_argument("--month", help="monthly only: YYYY-MM; default: the current month")
     parser.add_argument("--results", help="results file (report only); default: runs/<id>/results.csv")
     args = parser.parse_args()
@@ -105,13 +96,7 @@ def main() -> int:
     except ConfigError as error:
         print(f"Config error: {error}")
         return 2
-    if args.jql and cfg["source"] != "jira":
-        print("--jql works only for Jira projects; use --keys for Linear.")
-        return 2
-    if args.keys and cfg["source"] != "linear":
-        print("--keys works only for Linear projects; use --jql for Jira.")
-        return 2
-    query = args.jql or ([k.strip() for k in args.keys.split(",") if k.strip()] if args.keys else None)
+    query = args.jql
 
     if args.command == "check":
         cmd_check(cfg)
@@ -125,7 +110,7 @@ def main() -> int:
         cmd_status(store)
         return 0
 
-    print(f"Project {args.project} - run {store.dir.name}")
+    print(f"Run {store.dir.name}")
     orchestrator = Orchestrator(cfg, store)
     try:
         if args.command == "design":
@@ -138,13 +123,13 @@ def main() -> int:
                 orchestrator.report(store.state.get("results_file"))
             elif store.state["status"] == "waiting_for_results":
                 print("Design is finished. Fill in results.csv, then run: "
-                      f"python3 run.py report --project {args.project} --run {store.dir.name}")
+                      f"python3 run.py report --run {store.dir.name}")
             else:
                 orchestrator.design(store.state.get("query", store.state.get("jql")))
         return 0
     except KeyboardInterrupt:
         store.set(status="stopped")
-        print(f"\nStopped. Continue with: python3 run.py resume --project {args.project} --run {store.dir.name}")
+        print(f"\nStopped. Continue with: python3 run.py resume --run {store.dir.name}")
         return 130
     except Exception as error:  # noqa: BLE001 - every failure becomes an incident + resume hint
         step = store.state.get("current_step") or store.state["phase"]
@@ -152,7 +137,7 @@ def main() -> int:
         store.incidents.log(step, "failure", f"{type(error).__name__}: {error}", "run stopped; fix and resume")
         (store.dir / "last_error.txt").write_text(traceback.format_exc(), encoding="utf-8")
         print(f"\nFailed at {step}. Details: {store.dir / 'last_error.txt'}"
-              f"\nFix the cause, then: python3 run.py resume --project {args.project} --run {store.dir.name}")
+              f"\nFix the cause, then: python3 run.py resume --run {store.dir.name}")
         return 1
 
 
