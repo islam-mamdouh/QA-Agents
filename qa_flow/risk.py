@@ -1,7 +1,7 @@
-"""Risk-based testing: every story gets a risk score = impact x likelihood (each 1-5).
+"""Risk-based testing: every CR requirement gets a risk score = impact x likelihood (each 1-5).
 
-The story analysis agent rates impact and likelihood; the score and level are calculated here,
-so they are always consistent. Higher-risk stories are tested first and more deeply.
+The CR analysis agent rates impact and likelihood; the score and level are calculated here,
+so they are always consistent. Higher-risk requirements are tested first and more deeply.
 """
 LEVELS = ((15, "high"), (8, "medium"), (1, "low"))  # score >= 15 high, >= 8 medium, else low
 
@@ -17,9 +17,9 @@ def rate(impact, likelihood) -> dict:
 
 
 def check_risk(data: dict) -> None:
-    """Validator (fire-back): every analysed story needs impact and likelihood from 1 to 5."""
-    for story in data.get("stories", []):
+    """Validator (fire-back): every requirement needs impact and likelihood from 1 to 5."""
+    for req in data.get("requirements", []):
         for field in ("risk_impact", "risk_likelihood"):
-            value = story.get(field)
+            value = req.get(field)
             if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 5:
-                raise ValueError(f"story '{story.get('key')}': '{field}' must be a whole number from 1 to 5")
+                raise ValueError(f"requirement '{req.get('id')}': '{field}' must be a whole number from 1 to 5")

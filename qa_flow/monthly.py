@@ -3,13 +3,14 @@
   python3 run.py monthly [--month 2026-11]
 
 Inputs
-- every run of the project whose report finished in that month (runs/<id>/artifacts/report_data.json)
-- projects/zatca/escaped_defects.csv: bugs found after release (by users, support or production
-  monitoring). You keep this file; it is created empty the first time.
+- every CR run whose report finished in that month (runs/<id>/artifacts/report_data.json)
+- projects/zatca/escaped_defects.csv: bugs found after release (by UAT, users or production).
+  You keep this file; it is created empty the first time. Every escaped defect needs a root cause
+  (fishbone category) and a 5 Whys analysis.
 
-Output (projects/zatca/monthly/<month>/): monthly_report.md, metrics.json and a Google Sheets tab.
-It includes KPIs with the change from last month, defect leakage, a control chart of failures
-per run, Pareto by root cause and an automatic process audit (internal audit, ISO 19011 style).
+Output (projects/zatca/monthly/<month>/): monthly_report.md, monthly.xlsx and metrics.json.
+It includes KPIs with the change from last month, defect leakage, a control chart of defects
+per build, Pareto by module and root cause, and an automatic process audit (ISO 19011 style).
 """
 import csv
 import json
@@ -18,10 +19,10 @@ from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
-from .quality import SEVERITIES, _pct, pareto
-from .results import ROOT_CAUSES
+from .quality import _pct, pareto
+from .results import ROOT_CAUSES, SEVERITIES
 
-ESCAPED_COLUMNS = ["date", "bug_id", "title", "severity", "story", "root_cause", "found_by", "notes"]
+ESCAPED_COLUMNS = ["date", "bug_id", "cr", "title", "severity", "module", "root_cause", "five_whys", "found_by", "notes"]
 
 
 # ---- inputs ---------------------------------------------------------------
@@ -76,18 +77,29 @@ def runs_of_month(runs_dir: Path, month: str) -> dict:
 
 
 # ---- calculations -----------------------------------------------------------
-def control_chart(points: list) -> dict:
-    """c-chart for the number of failed cases per run: centre line and 3-sigma limits.
+def defects_per_build(reports: list) -> list:
+    """(build, failed cases) in the order builds were first seen. Rows without a build use the run id."""
+    counts = {}
+    for rep in reports:
+        for r in rep["rows"]:
+            label = r.get("build") or rep["run_id"]
+            counts.setdefault(label, 0)
+            counts[label] += r["status"] == "Fail"
+    return list(counts.items())
 
-    A run above the upper limit is a signal that something in the process changed
-    (a weak release, a new area, environment problems) and should be investigated.
+
+def control_chart(points: list) -> dict:
+    """c-chart for the number of defects per build: centre line and 3-sigma limits.
+
+    A build above the upper limit is a signal that something in the process changed
+    (a weak build, a new area, environment problems) and should be investigated.
     """
     if not points:
         return {"mean": 0, "ucl": 0, "lcl": 0, "points": []}
     mean = sum(c for _, c in points) / len(points)
     ucl, lcl = mean + 3 * math.sqrt(mean), max(0.0, mean - 3 * math.sqrt(mean))
     return {"mean": round(mean, 2), "ucl": round(ucl, 2), "lcl": round(lcl, 2),
-            "points": [{"run": label, "failed": c, "signal": "above UCL" if c > ucl else ("below LCL" if c < lcl else "")}
+            "points": [{"build": label, "failed": c, "signal": "above UCL" if c > ucl else ("below LCL" if c < lcl else "")}
                        for label, c in points]}
 
 
@@ -98,17 +110,21 @@ def month_metrics(reports: list, escaped: list) -> dict:
     tracked = [r for r in failed if r.get("bug_status")]
     gaps = [g for rep in reports for g in rep.get("gaps", [])]
     found = len({r["bug_id"] for r in failed if r.get("bug_id")} | {r["id"] for r in failed if not r.get("bug_id")})
-    stories = [m for rep in reports for m in rep.get("matrix", [])]
-    covered = sum(1 for m in stories if m["coverage"] != "Not covered")
+    reqs = [m for rep in reports for m in rep.get("matrix", []) if m["requirement"] != "REG"]
+    covered = sum(1 for m in reqs if m["coverage"] != "Not covered")
+    passed_or_failed = [r for r in rows if r["status"] in ("Pass", "Fail")]
 
     def kpi(name, value, meaning):
         return {"kpi": name, "value": value, "meaning": meaning}
 
     kpis = [
-        kpi("Runs reported", str(len(reports)), "Test runs with a finished report this month"),
+        kpi("CRs reported", str(len({rep.get("cr", rep["run_id"]) for rep in reports})),
+            "Change Requests with a finished test report this month"),
         kpi("Test cases executed", str(len(executed)), "Across all runs"),
         kpi("Pass rate", _pct(sum(1 for r in executed if r["status"] == "Pass"), len(executed)), "Passed out of executed"),
-        kpi("Requirements coverage", _pct(covered, len(stories)), "Stories with test cases, across all runs"),
+        kpi("Requirements coverage", _pct(covered, len(reqs)), "CR requirements with test cases"),
+        kpi("POT evidence complete", _pct(sum(1 for r in passed_or_failed if r.get("evidence")), len(passed_or_failed)),
+            "Passed/failed cases with a screenshot reference"),
         kpi("Defects found in testing", str(found), "Unique bugs from failed cases"),
         kpi("Escaped defects", str(len(escaped)), "Bugs found after release (escaped_defects.csv)"),
         kpi("Defect leakage", _pct(len(escaped), found + len(escaped)),
@@ -125,16 +141,19 @@ def month_metrics(reports: list, escaped: list) -> dict:
     ]
     causes = Counter(r.get("root_cause") or "not set" for r in failed)
     causes.update(e.get("root_cause") or "not set" for e in escaped)
+    modules = Counter(r.get("module") or "not set" for r in failed)
+    modules.update(e.get("module") or "not set" for e in escaped)
     return {
         "kpis": kpis,
-        "control_chart": control_chart([(rep["run_id"], sum(1 for r in rep["rows"] if r["status"] == "Fail"))
-                                        for rep in reports]),
+        "control_chart": control_chart(defects_per_build(reports)),
+        "pareto_by_module": pareto(modules),
         "pareto_by_root_cause": pareto(causes),
         "severity": [{"severity": s, "testing": sum(1 for r in failed if r.get("severity") == s),
                       "escaped": sum(1 for e in escaped if e.get("severity") == s)} for s in SEVERITIES],
         "escaped": escaped,
         "_raw": {"failed": len(failed), "with_cause": sum(1 for r in failed if r.get("root_cause")),
-                 "stories": len(stories), "covered": covered, "gaps_open": sum(1 for g in gaps if g["status"] == "open"),
+                 "requirements": len(reqs), "covered": covered,
+                 "evidence_missing": sum(1 for r in passed_or_failed if not r.get("evidence")), "gaps_open": sum(1 for g in gaps if g["status"] == "open"),
                  "rejected": sum(1 for r in tracked if r["bug_status"] == "rejected"), "tracked": len(tracked)},
     }
 
@@ -146,21 +165,24 @@ def audit(metrics: dict, unfinished: list) -> list:
     def check(name, ok, evidence):
         return {"check": name, "result": "n/a" if ok is None else ("Yes" if ok else "No"), "evidence": evidence}
 
-    signals = [p["run"] for p in chart["points"] if p["signal"] == "above UCL"]
+    signals = [p["build"] for p in chart["points"] if p["signal"] == "above UCL"]
     return [
         check("Every run of the month has a finished report", not unfinished,
               "unfinished: " + ", ".join(unfinished) if unfinished else "all runs reported"),
-        check("Every story in scope has test cases", raw["covered"] == raw["stories"] if raw["stories"] else None,
-              f"{raw['covered']}/{raw['stories']} stories covered"),
+        check("Every CR requirement has test cases", raw["covered"] == raw["requirements"] if raw["requirements"] else None,
+              f"{raw['covered']}/{raw['requirements']} requirements covered"),
+        check("Every executed case has POT evidence", raw["evidence_missing"] == 0 if raw["failed"] or raw["covered"] else None,
+              f"{raw['evidence_missing']} executed case(s) without a screenshot reference"),
         check("Root cause recorded for at least 95% of failed cases",
               raw["with_cause"] >= 0.95 * raw["failed"] if raw["failed"] else None,
               f"{raw['with_cause']}/{raw['failed']} failed cases"),
         check("No requirement gap left open", raw["gaps_open"] == 0, f"{raw['gaps_open']} open"),
         check("Bug rejection rate is 10% or less", raw["rejected"] <= 0.10 * raw["tracked"] if raw["tracked"] else None,
               f"{raw['rejected']}/{raw['tracked']} tracked bugs rejected"),
-        check("Every escaped defect has a root cause", all(e["root_cause"] for e in escaped) if escaped else None,
-              f"{sum(1 for e in escaped if e['root_cause'])}/{len(escaped)} analysed"),
-        check("No run above the control limit (or each one investigated)", not signals,
+        check("Every escaped defect has a root cause and a 5 Whys analysis",
+              all(e["root_cause"] and e["five_whys"] for e in escaped) if escaped else None,
+              f"{sum(1 for e in escaped if e['root_cause'] and e['five_whys'])}/{len(escaped)} analysed"),
+        check("No build above the control limit (or each one investigated)", not signals,
               "signals: " + ", ".join(signals) if signals else "process in control"),
     ]
 
@@ -200,39 +222,42 @@ def build_monthly(cfg: dict, month: str | None = None, use_agent: bool = True) -
             "month": month,
             "kpis": metrics["kpis"],
             "control_chart": metrics["control_chart"],
+            "pareto_by_module": metrics["pareto_by_module"],
             "pareto_by_root_cause": metrics["pareto_by_root_cause"],
             "severity": metrics["severity"],
             "audit": metrics["audit"],
-            "escaped": [{k: e[k] for k in ("title", "severity", "root_cause")} for e in metrics["escaped"]],
+            "escaped": [{k: e[k] for k in ("title", "severity", "module", "root_cause", "five_whys")}
+                        for e in metrics["escaped"]],
         }, "monthly_summary")
     metrics["summary"] = summary
 
     store.save("metrics", {k: v for k, v in metrics.items() if k != "_raw"})
     report_path = store.write_text("monthly_report.md", render.monthly_md(month, metrics))
-    url = None
-    if current["reports"]:
-        from .sheets import publish_table
-        prefix = cfg["google_sheets"].get("worksheet_prefix", "QA")
-        url = publish_table(cfg, store, f"{prefix} Monthly {month}", ["Section", "Item", "Value", "Last month / note"],
-                            monthly_rows(metrics), [170, 320, 120, 380], "monthly_sheet")
-    return {"month": month, "runs": len(current["reports"]), "report": report_path, "url": url,
+    from .excel import rows_from_lists, write_workbook
+    excel_path = store.dir / "monthly.xlsx"
+    columns = [("Section", 0, 22), ("Item", 1, 45), ("Value", 2, 16), ("Last month / note", 3, 60)]
+    write_workbook(excel_path, [(f"Monthly {month}", columns, rows_from_lists(monthly_rows(metrics)), None)])
+    return {"month": month, "runs": len(current["reports"]), "report": report_path, "excel": excel_path,
             "escaped_file": escaped_path}
 
 
 def monthly_rows(metrics: dict) -> list:
-    """Flat rows for the Google Sheets tab."""
+    """Flat rows for monthly.xlsx."""
     s = metrics.get("summary") or {}
     rows = [["Summary", "Executive summary", "", s.get("executive_summary", "")],
             ["Summary", "Trend", "", s.get("trend_assessment", "")]]
     rows += [["KPI", k["kpi"], k["value"], k["last_month"]] for k in metrics["kpis"]]
     chart = metrics["control_chart"]
     rows += [["Control chart", "Centre line / UCL / LCL", f"{chart['mean']} / {chart['ucl']} / {chart['lcl']}",
-              "failed cases per run"]]
-    rows += [["Control chart", p["run"], p["failed"], p["signal"]] for p in chart["points"]]
+              "defects per build"]]
+    rows += [["Control chart", p["build"], p["failed"], p["signal"]] for p in chart["points"]]
+    rows += [["Pareto module", p["item"], p["count"], f"{p['cumulative']} cumulative {'(vital few)' if p['vital'] else ''}"]
+             for p in metrics["pareto_by_module"]]
     rows += [["Pareto root cause", p["item"], p["count"], f"{p['cumulative']} cumulative {'(vital few)' if p['vital'] else ''}"]
              for p in metrics["pareto_by_root_cause"]]
     rows += [["Severity", r["severity"], r["testing"], f"escaped: {r['escaped']}"] for r in metrics["severity"]]
-    rows += [["Escaped defect", e["bug_id"] or e["title"], e["severity"], f"{e['root_cause']} - {e['title']}"]
+    rows += [["Escaped defect", e["bug_id"] or e["title"], e["severity"],
+              f"{e['root_cause']} - {e['title']} - 5 Whys: {e['five_whys'] or 'missing'}"]
              for e in metrics["escaped"]]
     rows += [["Process audit", a["check"], a["result"], a["evidence"]] for a in metrics["audit"]]
     rows += [["Improvement action", a, "", ""] for a in s.get("improvement_actions", [])]

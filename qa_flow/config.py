@@ -1,4 +1,8 @@
-"""Loads projects/zatca/config.md (a YAML block inside markdown) and fills ${ENV_VAR} values."""
+"""Loads projects/zatca/config.md (a YAML block inside markdown) and fills ${ENV_VAR} values.
+
+No credentials are needed: agents run through the Claude Code login, CR text is pasted into files
+by hand (no Jira integration) and all deliverables are local Excel / markdown files.
+"""
 import os
 import re
 from pathlib import Path
@@ -6,17 +10,21 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-FOLDER = ROOT / "projects" / "zatca"   # config.md, .env, secrets/, runs/ for the ZATCA project
+FOLDER = ROOT / "projects" / "zatca"   # config.md, crs/, knowledge/, runs/ for the ZATCA customs project
 
 FLOW_DEFAULTS = {
     "max_review_rounds": 3,
     "max_fire_back": 2,
     "api_retries": 4,
-    "analysis_batch_size": 5,
-    "cases_batch_size": 3,
+    "cases_batch_size": 4,       # CR requirements per test-case-writing call
     "report_batch_size": 40,
     "runs_dir": "runs",
     "strict_results": True,
+}
+INPUT_DEFAULTS = {
+    "crs_dir": "crs",            # one text file per CR: crs/<CR-ID>.md
+    "knowledge_dir": "knowledge",  # *.md system knowledge given to every agent (keep it short)
+    "cr_max_chars": 30000,
 }
 
 
@@ -52,11 +60,21 @@ def _in_folder(value: str) -> str:
     return str(path if path.is_absolute() else (FOLDER / path).resolve())
 
 
+def load_knowledge(folder: str) -> str:
+    """All *.md files in the knowledge folder (except README.md), joined, in name order."""
+    path = Path(folder)
+    if not path.is_dir():
+        return ""
+    parts = [f.read_text(encoding="utf-8").strip() for f in sorted(path.glob("*.md"))
+             if f.name.lower() != "readme.md"]
+    return "\n\n".join(p for p in parts if p)
+
+
 def load_config() -> dict:
     path = FOLDER / "config.md"
     if not path.exists():
         raise ConfigError(f"{path} not found. Copy {FOLDER / 'config.example.md'} to config.md and fill it in.")
-    _load_dotenv(FOLDER / ".env")   # projects/zatca/.env first, so it wins over the root .env
+    _load_dotenv(FOLDER / ".env")
     _load_dotenv(ROOT / ".env")
 
     text = path.read_text(encoding="utf-8")
@@ -64,18 +82,18 @@ def load_config() -> dict:
     if not match:
         raise ConfigError(f"No ```yaml block found in {path}")
     cfg = _expand_env(yaml.safe_load(match.group(1)) or {})
-
-    for section in ("models", "jira", "google_sheets"):
-        if section not in cfg:
-            raise ConfigError(f"Missing section '{section}' in {path}")
+    if "models" not in cfg:
+        raise ConfigError(f"Missing section 'models' in {path}")
 
     cfg["claude_code"] = {"command": "claude", "timeout_seconds": 900, **(cfg.get("claude_code") or {})}
     cfg["flow"] = {**FLOW_DEFAULTS, **(cfg.get("flow") or {})}
     cfg["flow"]["runs_dir"] = _in_folder(cfg["flow"]["runs_dir"])
-    sheets = cfg["google_sheets"]
-    if sheets.get("service_account_file"):
-        sheets["service_account_file"] = _in_folder(sheets["service_account_file"])
+    cfg["inputs"] = {**INPUT_DEFAULTS, **(cfg.get("inputs") or {})}
+    for key in ("crs_dir", "knowledge_dir"):
+        cfg["inputs"][key] = _in_folder(cfg["inputs"][key])
+    cfg["test_environment"] = str(cfg.get("test_environment") or "QA environment").strip()
     cfg["project_context"] = (cfg.get("project_context") or "").strip()
+    cfg["knowledge"] = load_knowledge(cfg["inputs"]["knowledge_dir"])
     return cfg
 
 
@@ -85,6 +103,5 @@ def require(cfg: dict, dotted: str):
     for part in dotted.split("."):
         node = node.get(part) if isinstance(node, dict) else None
     if node in (None, ""):
-        raise ConfigError(f"'{dotted}' is empty in projects/zatca/config.md (or its environment variable is not set)")
+        raise ConfigError(f"'{dotted}' is empty in projects/zatca/config.md")
     return node
-

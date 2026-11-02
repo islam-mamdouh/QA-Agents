@@ -1,33 +1,34 @@
 """Requirements traceability matrix (RTM) and the requirement gaps log.
 
-RTM: every story (requirement) -> its scenarios -> its test cases -> results -> bugs.
-Gaps: the questions raised during story analysis, kept in requirement_gaps.csv so you can
-send them to the BA/dev team and record the answers. Each gap caught here is a defect
-prevented before testing.
+RTM: every CR requirement -> its scenarios -> test cases -> results -> POT evidence -> bugs
+(ISO 9001 style traceability, plan-do-check-act).
+Gaps: the questions raised while analysing the CR, kept in requirement_gaps.csv so you can send
+them to the BA/dev team before development finishes and record the answers. Each gap caught
+here is a defect prevented (QA, not only QC).
 """
 import csv
 from datetime import date
 from pathlib import Path
 
-GAP_COLUMNS = ["gap_id", "story", "question", "status", "answer", "raised"]
+GAP_COLUMNS = ["gap_id", "requirement", "question", "confirm_with", "status", "answer", "raised"]
 GAP_STATUSES = ("open", "answered", "closed")  # closed = no longer relevant
 
 MATRIX_COLUMNS = [
-    ("Story", "story"), ("Summary", "summary"), ("Risk", "risk"), ("Acceptance Criteria", "ac_count"),
-    ("Scenarios Covered", "scenarios"), ("Test Cases", "test_cases"), ("Passed", "Pass"), ("Failed", "Fail"),
-    ("Blocked", "Blocked"), ("Not Run", "Not Run"), ("Bugs", "bugs"), ("Open Gaps", "open_gaps"),
-    ("Coverage Status", "coverage"),
+    ("Requirement", "requirement", 12), ("Description", "text", 50), ("Risk", "risk", 14),
+    ("Scenarios Covered", "scenarios", 12), ("Test Cases", "test_cases", 40), ("Passed", "Pass", 8),
+    ("Failed", "Fail", 8), ("Blocked", "Blocked", 8), ("Not Run", "Not Run", 8), ("POT Evidence", "evidence", 12),
+    ("Bugs", "bugs", 20), ("Open Gaps", "open_gaps", 10), ("Coverage Status", "coverage", 22),
 ]
+GAP_SHEET_COLUMNS = [("Gap ID", "gap_id", 18), ("Requirement", "requirement", 12), ("Question", "question", 70),
+                     ("Confirm With", "confirm_with", 16), ("Status", "status", 10), ("Answer", "answer", 50)]
 
 
 # ---- gaps -----------------------------------------------------------------
-def collect_gaps(analysis: dict, order: list) -> list:
-    gaps = []
-    for key in order:
-        for n, question in enumerate(analysis.get(key, {}).get("questions") or [], 1):
-            gaps.append({"gap_id": f"{key}-Q{n:02d}", "story": key, "question": question,
-                         "status": "open", "answer": "", "raised": date.today().isoformat()})
-    return gaps
+def collect_gaps(cr_id: str, questions: list) -> list:
+    return [{"gap_id": f"{cr_id}-Q{n:02d}", "requirement": q.get("requirement", ""), "question": q.get("question", ""),
+             "confirm_with": q.get("confirm_with", "BA"), "status": "open", "answer": "",
+             "raised": date.today().isoformat()}
+            for n, q in enumerate(questions, 1) if q.get("question")]
 
 
 def read_gaps(path: Path) -> list:
@@ -75,33 +76,33 @@ def _coverage(case_count: int, counts: dict | None) -> str:
     return "Passed"
 
 
-def build_matrix(order: list, analysis: dict, cases: list, results: dict | None = None, gaps: list | None = None) -> list:
-    """One row per story. `results` (test case id -> result) is None before execution."""
+def build_matrix(requirements: list, cases: list, results: dict | None = None, gaps: list | None = None) -> list:
+    """One row per CR requirement. `results` (test case id -> result) is None before execution."""
     matrix = []
-    for key in order:
-        a = analysis.get(key, {})
-        story_cases = [c for c in cases if c["story"] == key]
-        scenario_ids = {s.get("id") for s in a.get("scenarios", [])}
-        covered = scenario_ids & {c.get("scenario") for c in story_cases}
-        counts = None
+    for req in requirements:
+        rid = req["id"]
+        req_cases = [c for c in cases if c["requirement"] == rid]
+        scenario_ids = {s.get("id") for s in req.get("scenarios", [])}
+        covered = scenario_ids & {sid.strip() for c in req_cases for sid in str(c.get("scenario", "")).split(",")}
+        counts, evidence, bugs = None, "", ""
         if results is not None:
             counts = {s: 0 for s in ("Pass", "Fail", "Blocked", "Skipped", "Not Run")}
-            for c in story_cases:
+            for c in req_cases:
                 counts[results[c["id"]]["status"]] += 1
-        bugs = sorted({results[c["id"]]["bug_id"] for c in story_cases
-                       if results is not None and results[c["id"]].get("bug_id")})
-        risk = a.get("risk")
+            executed = [c for c in req_cases if results[c["id"]]["status"] in ("Pass", "Fail")]
+            evidence = f"{sum(1 for c in executed if results[c['id']].get('evidence'))}/{len(executed)}"
+            bugs = ", ".join(sorted({results[c["id"]]["bug_id"] for c in req_cases if results[c["id"]].get("bug_id")}))
+        risk = req.get("risk")
         matrix.append({
-            "story": key, "summary": a.get("summary", ""),
+            "requirement": rid, "text": req.get("text", ""),
             "risk": f"{risk['level']} ({risk['score']})" if risk else "",
-            "ac_count": len(a.get("acceptance_criteria") or []),
             "scenarios": f"{len(covered)}/{len(scenario_ids)}",
             "scenarios_covered": len(covered), "scenarios_total": len(scenario_ids),
-            "test_cases": ", ".join(c["id"] for c in story_cases),
+            "test_cases": ", ".join(c["id"] for c in req_cases),
             **({s: counts[s] for s in ("Pass", "Fail", "Blocked", "Not Run")} if counts
                else {s: "" for s in ("Pass", "Fail", "Blocked", "Not Run")}),
-            "bugs": ", ".join(bugs),
-            "open_gaps": sum(1 for g in gaps or [] if g["story"] == key and g["status"] == "open"),
-            "coverage": _coverage(len(story_cases), counts),
+            "evidence": evidence, "bugs": bugs,
+            "open_gaps": sum(1 for g in gaps or [] if g["requirement"] == rid and g["status"] == "open"),
+            "coverage": _coverage(len(req_cases), counts),
         })
     return matrix

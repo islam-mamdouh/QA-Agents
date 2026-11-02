@@ -1,26 +1,35 @@
-"""Orchestrator: runs the agents in order, owns the review loops and the checkpoints.
+"""Orchestrator: runs the agents in order for one Change Request (CR), owns the review loops
+and the checkpoints.
 
-Design phase (steps 1-13):
-  01 Jira agent -> 02 story analysis (+review) -> 03 test plan (+review) -> 04 test cases (+review)
-  -> outputs test_cases.md and results.csv, then pauses for manual execution.
-Report phase (steps 14-15), started by `python3 run.py report`:
-  05 report rows -> 06 report summary -> 07 Google Sheets.
+Design phase (`python3 run.py design --cr CR-ID`):
+  01 CR intake (your pasted CR text, no Jira access) -> 02 CR analysis (+review)
+  -> 03 test plan (+review) -> 04 test cases (+review)
+  -> test_cases.xlsx (Jira test fields), cr_analysis.md, requirement gaps, results.csv; then pauses.
+Report phase (`python3 run.py report`), after you ran the cases and filled results.csv:
+  05 report rows -> 06 UAT summary
+  -> pot.xlsx (proof of testing), bug_reports.md (ready for Jira), uat_summary.md, quality.md.
 
 Every step is saved when it finishes, and every review round is saved too,
 so `python3 run.py resume` continues from the exact point where a run stopped.
 """
 import hashlib
+from collections import Counter
 from pathlib import Path
 
 from . import render
 from .agents import Agents
-from . import jira_agent
+from .excel import POT_COLUMNS, TEST_CASE_COLUMNS, simple_columns, rows_from_lists, test_case_row, write_workbook
+from .intake import cr_path, read_cr
 from .llm import LLM
 from .quality import compute_quality
-from .risk import check_risk, rate
 from .results import STATUS_ORDER, read_results, write_template
-from .sheets import publish, publish_design
-from .traceability import build_matrix, collect_gaps, read_gaps, write_gaps
+from .risk import check_risk, rate
+from .traceability import (GAP_SHEET_COLUMNS, MATRIX_COLUMNS, build_matrix, collect_gaps, read_gaps,
+                           write_gaps)
+
+CASE_TYPES = ("positive", "negative", "boundary")
+PRIORITIES = ("high", "medium", "low")
+REGRESSION = "REG"   # pseudo requirement that holds the regression test cases of impacted areas
 
 
 class WorkflowError(Exception):
@@ -44,36 +53,61 @@ def check_keys(list_name: str, field: str, expected: list):
     return validate
 
 
-def both(*validators):
-    """Run several validators one after the other."""
-    def validate(data: dict) -> None:
-        for check in validators:
-            check(data)
-    return validate
+def check_analysis(data: dict) -> None:
+    reqs = data.get("requirements")
+    if not isinstance(reqs, list) or not reqs:
+        raise ValueError("'requirements' must be a non-empty list")
+    ids = [r.get("id") for r in reqs]
+    if len(set(ids)) != len(ids) or not all(ids) or REGRESSION in ids:
+        raise ValueError(f"every requirement needs a unique 'id' (R1, R2...; '{REGRESSION}' is reserved)")
+    for r in reqs:
+        if not r.get("text") or not isinstance(r.get("scenarios"), list) or not r["scenarios"]:
+            raise ValueError(f"requirement '{r['id']}' needs 'text' and at least one scenario")
+        bad = [s.get("id") for s in r["scenarios"] if s.get("type") not in CASE_TYPES]
+        if bad:
+            raise ValueError(f"requirement '{r['id']}': scenario type must be one of {', '.join(CASE_TYPES)} ({bad})")
+    for name in ("journey_stages", "systems", "regression_areas", "questions"):
+        if not isinstance(data.get(name), list):
+            raise ValueError(f"'{name}' must be a list (it can be empty)")
+    check_risk(data)
 
 
-def check_plan(keys: list):
+def check_plan(ids: list):
     def validate(data: dict) -> None:
-        for name in ("approach", "story_plans", "execution_order"):
+        for name in ("approach", "execution_order", "exit_criteria"):
             if name not in data:
                 raise ValueError(f"missing '{name}'")
-        check_keys("story_plans", "key", keys)(data)
-        missing = [k for k in keys if k not in data["execution_order"]]
+        missing = [k for k in ids if k not in data["execution_order"]]
         if missing:
             raise ValueError(f"'execution_order' is missing: {', '.join(missing)}")
     return validate
 
 
-def check_cases(keys: list):
+def check_cases(ids: list):
     def validate(data: dict) -> None:
-        check_keys("test_cases", "story", keys)(data)
+        check_keys("test_cases", "requirement", ids)(data)
         for case in data["test_cases"]:
-            steps = case.get("steps")
-            if not case.get("title") or not isinstance(steps, list) or not steps:
-                raise ValueError(f"case '{case.get('title', '?')}' needs a title and at least one step")
-            if any(not s.get("action") or not s.get("expected") for s in steps):
-                raise ValueError(f"case '{case['title']}' has a step without 'action' or 'expected'")
+            name = case.get("summary", "?")
+            for field in ("summary", "module", "system", "expected_result"):
+                if not case.get(field):
+                    raise ValueError(f"case '{name}' needs '{field}'")
+            if not isinstance(case.get("steps"), list) or not case["steps"] or not all(case["steps"]):
+                raise ValueError(f"case '{name}' needs 'steps' as a non-empty list of actions")
+            if case.get("type") not in CASE_TYPES or case.get("priority") not in PRIORITIES:
+                raise ValueError(f"case '{name}': type must be {'/'.join(CASE_TYPES)} and priority {'/'.join(PRIORITIES)}")
     return validate
+
+
+def requirements_with_regression(analysis: dict) -> list:
+    """CR requirements (with calculated risk) plus one pseudo requirement for the regression areas."""
+    reqs = [{**r, "risk": {**rate(r["risk_impact"], r["risk_likelihood"]), "reason": r.get("risk_reason", "")}}
+            for r in analysis["requirements"]]
+    areas = [a for a in analysis.get("regression_areas", []) if a.get("area")]
+    if areas:
+        reqs.append({"id": REGRESSION, "text": "Regression of impacted areas", "risk": None,
+                     "scenarios": [{"id": f"G{n}", "title": f"{a['area']} still works ({a.get('reason', '')})",
+                                    "type": "positive", "priority": "medium"} for n, a in enumerate(areas, 1)]})
+    return reqs
 
 
 class Orchestrator:
@@ -137,126 +171,96 @@ class Orchestrator:
         self.store.update_step(key, status="done")
         return draft
 
-    # ---- design phase: steps 1-13 ----------------------------------------
-    def design(self, query=None) -> None:
-        self.store.set(phase="design", status="running")
-
-        data = self._step("01_stories", lambda: jira_agent.fetch_stories(self.cfg, self.store, query))
-        stories, order = data["stories"], data["order"]
-        if not order:
-            raise WorkflowError("Jira returned no stories for this JQL.")
-        self.store.write_text("stories.md", render.stories_md(stories, order))
-        print(f"   {len(order)} stories, dependency order: {', '.join(order)}")
-
-        analysis = self._analysis(stories, order)
-        self.store.save("analysis", analysis)
-        plan = self._plan(stories, order, analysis)
-        cases = self._cases(plan, analysis)
-
-        self.store.write_text("test_plan.md", render.test_plan_md(plan, self._notes("03_test_plan")))
-        self.store.write_text("test_cases.md", render.test_cases_md(cases, plan, analysis, stories, self._notes("04_cases")))
-        results = self.store.dir / "results.csv"
-        write_template(results, cases)  # never overwrites a file you already started filling
-
-        # Requirement gaps (questions for the team) and the traceability matrix, before testing
-        gaps = write_gaps(self.store.dir / "requirement_gaps.csv", collect_gaps(analysis, order))
-        matrix = build_matrix(plan["execution_order"], analysis, cases, gaps=gaps)
-        self.store.write_text("traceability.md", render.traceability_md(matrix))
-        self.store.write_text("requirement_gaps.md", render.gaps_md(gaps))
-        sheet = self._step("04_design_sheets", lambda: {"url": publish_design(self.cfg, self.store, gaps, matrix)})
-        self.store.set(status="waiting_for_results", current_step=None)
-        print(f"\nRequirement gaps to send to the team ({len(gaps)}): {sheet['url']}"
-              f"\n  record answers in {self.store.dir / 'requirement_gaps.csv'}")
-        print(f"\nDone. Read:   {self.store.dir / 'test_cases.md'}"
-              f"\nFill in:      {results}"
-              f"\nThen run:     python3 run.py report --run {self.store.dir.name}")
-
-    def _analysis(self, stories: dict, order: list) -> dict:
-        analysis = {}
-        for i, batch in enumerate(chunk(order, self.flow["analysis_batch_size"]), 1):
-            task = {
-                "stories": [stories[k] for k in batch],
-                # stories this batch depends on: summary only, not the full text
-                "dependency_context": [{"key": d, "summary": stories[d]["summary"]}
-                                       for d in {d for k in batch for d in stories[k].get("depends_on", [])}
-                                       if d not in batch],
-            }
-            result = self._reviewed(f"02_analysis_b{i:02d}", "story_analysis", "analysis", task,
-                                    both(check_keys("stories", "key", batch), check_risk))
-            for item in result["stories"]:
-                if item.get("key") in stories:
-                    source = stories[item["key"]]
-                    analysis[item["key"]] = {**item, "summary": source["summary"],
-                                             "priority": source.get("priority", ""),
-                                             "depends_on": source.get("depends_on", []),
-                                             "risk": {**rate(item.get("risk_impact", 3), item.get("risk_likelihood", 3)),
-                                                      "reason": item.get("risk_reason", "")}}
-        return analysis
-
-    def _plan(self, stories: dict, order: list, analysis: dict) -> dict:
-        task = {"dependency_order": order, "stories": [
-            {"key": k, "summary": a["summary"], "priority": a["priority"], "depends_on": a["depends_on"],
-             "scenarios": [f"{s.get('id')} {s.get('type')}/{s.get('priority')}: {s.get('title')}"
-                           for s in a.get("scenarios", [])],
-             "risks": a.get("risks", [])[:5],
-             "risk": {"score": a["risk"]["score"], "level": a["risk"]["level"]}}
-            for k, a in ((k, analysis[k]) for k in order)]}
-        plan = self._reviewed("03_test_plan", "test_plan", "test_plan", task, check_plan(order))
-        plan["execution_order"] = [k for k in plan["execution_order"] if k in stories]
-        for story_plan in plan["story_plans"]:  # the calculated risk is shown next to each story
-            if story_plan.get("key") in analysis:
-                story_plan["risk"] = analysis[story_plan["key"]]["risk"]
-        return plan
-
-    def _cases(self, plan: dict, analysis: dict) -> list:
-        shared = {k: plan[k] for k in ("approach", "test_types", "environments") if k in plan}
-        per_story = {}
-        for i, batch in enumerate(chunk(plan["execution_order"], self.flow["cases_batch_size"]), 1):
-            task = {"plan": shared,
-                    "story_plans": [p for p in plan["story_plans"] if p.get("key") in batch],
-                    "analyses": [analysis[k] for k in batch]}
-            result = self._reviewed(f"04_cases_b{i:02d}", "test_cases", "test_cases", task, check_cases(batch))
-            for case in result["test_cases"]:
-                per_story.setdefault(case.get("story"), []).append(case)
-
-        # IDs are given here, not by the agent: always unique and stable.
-        cases = []
-        for key in plan["execution_order"]:
-            for n, case in enumerate(per_story.get(key, []), 1):
-                cases.append({"id": f"{key}-TC{n:02d}", **case, "story": key})
-        self.store.save("test_cases", cases)
-        return cases
-
     def _notes(self, prefix: str) -> list:
         """Major issues left open when a review loop hit its round limit."""
         return [i for k, step in self.store.state["steps"].items()
                 if k.startswith(prefix) and step.get("phase") == "limit"
                 for i in step.get("issues", []) if i["severity"] == "major"]
 
-    def _stories_in_scope(self) -> list:
-        data = self.store.load("01_stories") or {}
-        return data.get("order", [])
+    # ---- design phase ------------------------------------------------------
+    def design(self, cr_id: str, cr_file: str | None = None) -> None:
+        self.store.set(phase="design", status="running", cr=cr_id)
+        inputs = self.cfg["inputs"]
+        path = Path(cr_file) if cr_file else cr_path(inputs["crs_dir"], cr_id)
+        cr = self._step("01_cr", lambda: read_cr(cr_id, path, int(inputs["cr_max_chars"]), self.store))
+        print(f"   {cr['id']}: {cr['title']}")
 
-    def _load_analysis(self) -> dict:
-        """The combined story analysis (rebuilt from the batch outputs for runs made before it was saved)."""
-        analysis = self.store.load("analysis")
-        if analysis is not None:
-            return analysis
-        stories = (self.store.load("01_stories") or {}).get("stories", {})
-        analysis = {}
-        for key in self.store.state["steps"]:
-            if key.startswith("02_analysis"):
-                for item in (self.store.load(key) or {}).get("stories", []):
-                    analysis[item.get("key")] = {**item, "summary": stories.get(item.get("key"), {}).get("summary", ""),
-                                                 "risk": rate(item.get("risk_impact", 3), item.get("risk_likelihood", 3))}
-        return analysis
+        analysis = self._reviewed("02_analysis", "cr_analysis", "analysis",
+                                  {"cr": {k: cr[k] for k in ("id", "title", "text")}}, check_analysis)
+        requirements = requirements_with_regression(analysis)
+        plan = self._plan(cr, analysis, requirements)
+        cases = self._cases(cr, plan, requirements)
 
-    # ---- report phase: steps 14-15 ---------------------------------------
+        gaps = write_gaps(self.store.dir / "requirement_gaps.csv", collect_gaps(cr["id"], analysis.get("questions", [])))
+        matrix = build_matrix(requirements, cases, gaps=gaps)
+        self.store.write_text("cr_analysis.md", render.cr_analysis_md(cr, analysis, requirements, gaps,
+                                                                      self._notes("02_analysis")))
+        self.store.write_text("test_plan.md", render.test_plan_md(cr, plan, requirements, self._notes("03_test_plan")))
+        write_workbook(self.store.dir / "test_cases.xlsx", [
+            ("Test Cases", TEST_CASE_COLUMNS, [test_case_row(c) for c in cases], None),
+            ("Traceability", MATRIX_COLUMNS, matrix, None),
+            ("Gaps for BA-Dev", GAP_SHEET_COLUMNS, gaps, None),
+            ("Exploratory Charters", simple_columns(["Charter"], 100),
+             rows_from_lists([[c] for c in analysis.get("exploratory_charters", [])]), None),
+        ])
+        if self._notes("04_cases"):
+            self.store.write_text("reviewer_notes.md", render.notes_md(self._notes("04_cases")))
+        write_template(self.store.dir / "results.csv", cases)  # never overwrites a file you already started
+        self.store.set(status="waiting_for_results", current_step=None)
+        d = self.store.dir
+        print(f"\nDone: {len(cases)} test cases, {len(gaps)} gaps for the BA/dev team."
+              f"\n  Test cases (enter into Jira): {d / 'test_cases.xlsx'}"
+              f"\n  CR analysis and gaps:         {d / 'cr_analysis.md'}  (answers go in requirement_gaps.csv)"
+              f"\n  Fill in after testing:        {d / 'results.csv'}"
+              f"\n  Then run:                     python3 run.py report --run {d.name}")
+
+    def _plan(self, cr: dict, analysis: dict, requirements: list) -> dict:
+        ids = [r["id"] for r in requirements]
+        task = {"cr": {"id": cr["id"], "title": cr["title"]}, "summary": analysis.get("summary", ""),
+                "journey_stages": analysis.get("journey_stages", []), "systems": analysis.get("systems", []),
+                "test_data_needed": analysis.get("test_data_needed", []),
+                "requirements": [{"id": r["id"], "text": r["text"],
+                                  "risk": r["risk"] and {"score": r["risk"]["score"], "level": r["risk"]["level"]},
+                                  "scenarios": [f"{s.get('id')} {s.get('type')}/{s.get('priority')}: {s.get('title')}"
+                                                for s in r.get("scenarios", [])]} for r in requirements]}
+        plan = self._reviewed("03_test_plan", "test_plan", "test_plan", task, check_plan(ids))
+        plan["execution_order"] = [i for i in plan["execution_order"] if i in ids]
+        plan["execution_order"] += [i for i in ids if i not in plan["execution_order"]]
+        return plan
+
+    def _cases(self, cr: dict, plan: dict, requirements: list) -> list:
+        by_id = {r["id"]: r for r in requirements}
+        focus = {p.get("id"): p.get("focus", "") for p in plan.get("requirement_plans", [])}
+        shared = {k: plan[k] for k in ("approach", "systems_and_environments", "test_data_preparation") if k in plan}
+        per_req = {}
+        for i, batch in enumerate(chunk(plan["execution_order"], self.flow["cases_batch_size"]), 1):
+            task = {"cr": {"id": cr["id"], "title": cr["title"]}, "plan": shared,
+                    "requirements": [{**{k: v for k, v in by_id[rid].items() if k not in ("risk_reason",)},
+                                      "focus": focus.get(rid, "")} for rid in batch]}
+            result = self._reviewed(f"04_cases_b{i:02d}", "test_cases", "test_cases", task, check_cases(batch))
+            for case in result["test_cases"]:
+                per_req.setdefault(case.get("requirement"), []).append(case)
+
+        # IDs are given here, not by the agent: always unique and stable, in execution order.
+        cases, n = [], 0
+        for rid in plan["execution_order"]:
+            for case in per_req.get(rid, []):
+                n += 1
+                cases.append({**case, "id": f"{cr['id']}-TC-{n:03d}", "requirement": rid})
+        self.store.save("test_cases", cases)
+        self.store.save("requirements", requirements)
+        return cases
+
+    # ---- report phase ------------------------------------------------------
     def report(self, results_path: str | None = None) -> None:
         cases = self.store.load("test_cases")
         if cases is None:
             raise WorkflowError("This run has no test cases yet. Finish the design phase first (resume).")
         self.store.set(phase="report", status="running", current_step="report")
+        cr = self.store.load("01_cr")
+        requirements = self.store.load("requirements") or []
+        analysis = self.store.load("02_analysis") or {}
+        plan = self.store.load("03_test_plan") or {}
         path = Path(results_path) if results_path else self.store.dir / "results.csv"
         results = read_results(path, cases, self.store.incidents, strict=self.flow["strict_results"])
         gaps_path = self.store.dir / "requirement_gaps.csv"
@@ -267,24 +271,20 @@ class Orchestrator:
         if self.store.state.get("results_hash") not in (None, digest):
             self.store.incidents.log("report", "data", "results or gap answers changed since the last report",
                                      "report steps restarted")
-            for prefix in ("05_", "06_", "07_"):
+            for prefix in ("05_", "06_"):
                 self.store.reset_steps(prefix)
         self.store.set(phase="report", status="running", results_hash=digest, results_file=str(path))
 
-        rows = []
-        for case in cases:
-            result = results[case["id"]]
-            rows.append({"id": case["id"], "story": case["story"], "title": case["title"],
-                         "priority": case.get("priority", ""), "type": case.get("type", ""),
-                         "expected": case["steps"][-1]["expected"], **result})
+        rows = [{**{k: c.get(k, "") for k in ("id", "requirement", "summary", "module", "system", "priority",
+                                                "type", "expected_result")}, **results[c["id"]]} for c in cases]
 
         # Only rows with something to rewrite go to the agent; plain passes are formatted in Python.
         needs_text = [r for r in rows if r["status"] in ("Fail", "Blocked") or r["actual_result"] or r["notes"]]
         polished = {}
         for i, batch in enumerate(chunk(needs_text, self.flow["report_batch_size"]), 1):
             key = f"05_report_rows_b{i:02d}"
-            task = {"rows": [{k: v for k, v in r.items() if v and k not in ("story", "type", "root_cause", "bug_status")}
-                             for r in batch]}
+            task = {"rows": [{k: r[k] for k in ("id", "summary", "module", "system", "status", "expected_result",
+                                                "actual_result", "severity", "notes") if r.get(k)} for r in batch]}
             out = self._step(key, lambda: self.agents.write("report_rows", task, key,
                                                             validate=check_keys("rows", "id", [r["id"] for r in batch])))
             polished.update({r["id"]: r for r in out["rows"]})
@@ -293,41 +293,59 @@ class Orchestrator:
             extra = polished.get(row["id"], {})
             row["actual_result"] = extra.get("actual_result") or row["actual_result"] or (
                 "Works as expected." if row["status"] == "Pass" else "")
-            for field in ("defect_summary", "severity", "recommendation"):
-                row[field] = extra.get(field, "")
+            row["severity"] = row["severity"] or (extra.get("severity", "") if row["status"] == "Fail" else "")
+            row["defect_title"] = extra.get("defect_title", "")
+            row["recommendation"] = extra.get("recommendation", "")
 
         stats = compute_stats(rows)
-        plan = self.store.load("03_test_plan") or {}
-        analysis = self._load_analysis()
-        matrix = build_matrix(plan.get("execution_order") or self._stories_in_scope(), analysis, cases, results, gaps)
-        quality = compute_quality(rows, self._stories_in_scope(), gaps, matrix)
-        summary = self._step("06_report_summary", lambda: self.agents.write("report_summary", {
-            "stats": stats,
-            "quality": {k: quality[k] for k in ("kpis", "pareto_by_story", "pareto_by_root_cause", "severity")},
-            "exit_criteria": plan.get("exit_criteria", []),
-            "problems": [{k: r[k] for k in ("id", "title", "priority", "status", "severity", "root_cause", "defect_summary")}
-                         for r in rows if r["status"] in ("Fail", "Blocked")],
-        }, "06_report_summary"))
+        matrix = build_matrix(requirements, cases, results, gaps)
+        quality = compute_quality(rows, [r["id"] for r in requirements], gaps, matrix)
+        open_bugs = [{k: r[k] for k in ("bug_id", "defect_title", "severity", "module", "bug_status")}
+                     for r in rows if r["status"] == "Fail" and r.get("bug_status") not in ("fixed", "rejected")]
+        open_questions = [{k: g[k] for k in ("gap_id", "requirement", "question", "confirm_with")}
+                          for g in gaps if g["status"] == "open"]
+        summary = self._step("06_uat_summary", lambda: self.agents.write("uat_summary", {
+            "cr": {"id": cr["id"], "title": cr["title"]},
+            "what_changed": {"summary": analysis.get("summary", ""), "journey_stages": analysis.get("journey_stages", []),
+                             "systems": analysis.get("systems", []),
+                             "requirements": [{"id": r["id"], "text": r["text"]} for r in requirements]},
+            "how_tested": {"approach": plan.get("approach", ""), "systems": plan.get("systems_and_environments", []),
+                           "cases_by_type": dict(Counter(c.get("type") for c in cases)),
+                           "regression_cases": sum(1 for c in cases if c["requirement"] == REGRESSION)},
+            "stats": stats, "exit_criteria": plan.get("exit_criteria", []),
+            "open_bugs": open_bugs, "open_questions": open_questions,
+        }, "06_uat_summary"))
 
-        self.store.save("report_data", {"run_id": self.store.dir.name, "rows": rows, "stats": stats,
+        d = self.store.dir
+        self.store.save("report_data", {"run_id": d.name, "cr": cr["id"], "rows": rows, "stats": stats,
                                         "quality": quality, "gaps": gaps, "matrix": matrix, "summary": summary})
-        self.store.write_text("report.md", render.report_md(summary, stats, rows, quality))
-        self.store.write_text("traceability.md", render.traceability_md(matrix))
-        self.store.write_text("bug_reports.md", render.bug_reports_md(rows, cases, plan))
-        sheet = self._step("07_google_sheets",
-                           lambda: {"url": publish(self.cfg, self.store, rows, summary, stats, quality, gaps, matrix)})
+        write_workbook(d / "pot.xlsx", [
+            (f"POT {cr['id']}", POT_COLUMNS, rows, "status"),
+            ("Traceability", MATRIX_COLUMNS, matrix, None),
+            ("Summary", simple_columns(["Item", "Value"], 40),
+             rows_from_lists([["CR", f"{cr['id']} - {cr['title']}"], ["Environment", self.cfg["test_environment"]],
+                              ["Test cases", stats["total"]], ["Executed", stats["executed"]],
+                              ["Pass rate", stats["pass_rate"]]]
+                             + [[s, n] for s, n in stats["by_status"].items()]), None),
+        ])
+        self.store.write_text("bug_reports.md", render.bug_reports_md(rows, cases, self.cfg["test_environment"]))
+        self.store.write_text("uat_summary.md", render.uat_summary_md(cr, summary, stats, open_bugs, open_questions))
+        self.store.write_text("quality.md", render.quality_md(cr, stats, quality, matrix, rows))
         self.store.set(status="done", current_step=None)
-        print(f"\nReport ready: {sheet['url']}\nLocal copy:   {self.store.dir / 'report.md'}"
-              f"\nBug drafts:   {self.store.dir / 'bug_reports.md'}")
+        print(f"\nReport ready for {cr['id']}:"
+              f"\n  POT (proof of testing): {d / 'pot.xlsx'}"
+              f"\n  Bug reports for Jira:   {d / 'bug_reports.md'}"
+              f"\n  UAT meeting summary:    {d / 'uat_summary.md'}"
+              f"\n  Quality (KPIs, Pareto): {d / 'quality.md'}")
 
 
 def compute_stats(rows: list) -> dict:
     by_status = {s: 0 for s in STATUS_ORDER}
-    per_story = {}
+    per_requirement = {}
     for row in rows:
         by_status[row["status"]] += 1
-        story = per_story.setdefault(row["story"], {s: 0 for s in STATUS_ORDER})
-        story[row["status"]] += 1
+        req = per_requirement.setdefault(row["requirement"], {s: 0 for s in STATUS_ORDER})
+        req[row["status"]] += 1
     executed = len(rows) - by_status["Not Run"]
     return {
         "total": len(rows),
@@ -336,5 +354,5 @@ def compute_stats(rows: list) -> dict:
         "pass_rate": f"{100 * by_status['Pass'] / executed:.1f}%" if executed else "n/a",
         "failed_by_severity": {sev: sum(1 for r in rows if r["status"] == "Fail" and r.get("severity") == sev)
                                for sev in ("critical", "major", "minor", "trivial")},
-        "per_story": per_story,
+        "per_requirement": per_requirement,
     }

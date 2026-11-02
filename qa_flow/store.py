@@ -41,18 +41,24 @@ class RunStore:
 
     # ---- opening runs -------------------------------------------------
     @classmethod
-    def create(cls, runs_dir) -> "RunStore":
-        return cls(Path(runs_dir) / datetime.now().strftime("%Y%m%d-%H%M%S"))
+    def create(cls, runs_dir, cr_id: str = "") -> "RunStore":
+        """New run folder: <YYYYMMDD-HHMMSS>-<CR-ID> (the date prefix is used by the monthly report)."""
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        return cls(Path(runs_dir) / (f"{stamp}-{cr_id}" if cr_id else stamp))
 
     @classmethod
-    def open(cls, runs_dir, run_id: str | None = None) -> "RunStore":
+    def open(cls, runs_dir, run_id: str | None = None, cr_id: str | None = None) -> "RunStore":
+        """A run by id, the latest run of a CR, or the latest run."""
         runs_dir = Path(runs_dir)
         if run_id:
             path = runs_dir / run_id
         else:
-            runs = sorted(p for p in runs_dir.glob("*") if (p / "state.json").exists()) if runs_dir.exists() else []
+            runs = sorted(p for p in runs_dir.glob("*") if (p / "state.json").exists()
+                          and not p.name.startswith("_")) if runs_dir.exists() else []
+            if cr_id:
+                runs = [p for p in runs if p.name.endswith(f"-{cr_id}")]
             if not runs:
-                raise FileNotFoundError(f"No runs found in {runs_dir}/")
+                raise FileNotFoundError(f"No runs found in {runs_dir}/" + (f" for {cr_id}" if cr_id else ""))
             path = runs[-1]
         if not (path / "state.json").exists():
             raise FileNotFoundError(f"Run not found: {path}")
