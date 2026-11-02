@@ -2,9 +2,15 @@ config.md
 .env
 secrets/
 runs/
+monthly/
+escaped_defects.csv
 __pycache__/
 *.pyc
 .venv/
-escaped_defects.csv
-monthly/
 .DS_Store
+
+# Client documents and internal system knowledge stay on your machine only
+projects/zatca/crs/*
+!projects/zatca/crs/README.md
+projects/zatca/knowledge/*
+!projects/zatca/knowledge/README.md

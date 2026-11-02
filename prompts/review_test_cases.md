@@ -1,6 +1,7 @@
 ## What to check (test cases)
-- Every scenario of every story in the analyses is covered by a case.
-- Each step is one concrete action with a specific, checkable expected result.
-- Preconditions and test data are enough to start without asking anyone.
-- Expected results agree with the acceptance criteria.
-- No duplicate cases; priorities match the scenarios.
+- Every scenario of every requirement is covered by a case.
+- Every case has summary, module, system, preconditions, steps, test data, expected result, type, priority.
+- Each step is one concrete action; the expected result is specific and checkable, with UI/EDI/DB
+  checks where the flow produces them.
+- Expected results agree with the acceptance criteria; unclear rules say "To confirm with BA".
+- No credentials, no duplicate cases; type and priority match the scenario.

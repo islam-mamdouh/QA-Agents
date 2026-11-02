@@ -1,7 +1,9 @@
 """Agents = a prompt file in prompts/ + a model.
 
-Main agents (Opus) write: story_analysis, test_plan, test_cases, report_rows, report_summary.
+Main agents (Opus) write: cr_analysis, test_plan, test_cases, report_rows, uat_summary, monthly_summary.
 Reviewer agents (Sonnet) check: reviewer_base.md + review_<stage>.md.
+Every agent also gets prompts/project_rules.md, the product context from config.md and the
+system knowledge files from projects/zatca/knowledge/.
 To change what an agent does, edit its prompt file. No code change needed.
 """
 import json
@@ -38,12 +40,15 @@ class Agents:
         self.llm = llm
         self.main_model = cfg["models"]["main"]
         self.reviewer_model = cfg["models"]["reviewer"]
-        self.context = cfg["project_context"]
+        self.context = cfg.get("project_context", "")
+        self.knowledge = cfg.get("knowledge", "")
 
     def _system(self, *prompt_names: str) -> str:
-        parts = [load_prompt(name) for name in prompt_names]
+        parts = [load_prompt(name) for name in prompt_names] + [load_prompt("project_rules")]
         if self.context:
             parts.append("## Product context\n" + self.context)
+        if self.knowledge:
+            parts.append("## System knowledge\n" + self.knowledge)
         return "\n\n".join(parts)
 
     def write(self, role: str, task_input, step: str, previous=None, issues=None, validate=None) -> dict:

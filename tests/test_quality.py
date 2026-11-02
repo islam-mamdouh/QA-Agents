@@ -5,8 +5,8 @@ from qa_flow.quality import compute_quality, pareto
 from qa_flow.risk import check_risk, rate
 
 
-def row(story, status, **extra):
-    return {"id": f"{story}-{status}-{len(extra)}", "story": story, "status": status, **extra}
+def row(module, status, **extra):
+    return {"id": f"{module}-{status}-{len(extra)}", "module": module, "status": status, **extra}
 
 
 class RiskTest(unittest.TestCase):
@@ -16,10 +16,10 @@ class RiskTest(unittest.TestCase):
         self.assertEqual(rate(2, 3)["level"], "low")
 
     def test_validator(self):
-        check_risk({"stories": [{"key": "A", "risk_impact": 5, "risk_likelihood": 1}]})
+        check_risk({"requirements": [{"id": "R1", "risk_impact": 5, "risk_likelihood": 1}]})
         for bad in (0, 6, "3", 2.5, True, None):
             with self.assertRaises(ValueError):
-                check_risk({"stories": [{"key": "A", "risk_impact": bad, "risk_likelihood": 3}]})
+                check_risk({"requirements": [{"id": "R1", "risk_impact": bad, "risk_likelihood": 3}]})
 
 
 class QualityTest(unittest.TestCase):
@@ -31,24 +31,25 @@ class QualityTest(unittest.TestCase):
         self.assertEqual(pareto(Counter()), [])
 
     def test_kpis(self):
-        rows = [row("A", "Pass"), row("A", "Fail", severity="critical", root_cause="code", bug_status="rejected"),
-                row("B", "Fail", severity="minor", bug_status="fixed"), row("B", "Blocked"), row("B", "Not Run")]
+        rows = [row("Declarations", "Pass", evidence="a.png"),
+                row("Declarations", "Fail", severity="critical", root_cause="code", bug_status="rejected", evidence="b.png"),
+                row("EDI", "Fail", severity="minor", bug_status="fixed"), row("EDI", "Blocked"), row("EDI", "Not Run")]
         gaps = [{"status": "open"}, {"status": "answered"}, {"status": "closed"}, {"status": "open"}]
-        matrix = [{"scenarios_covered": 2, "scenarios_total": 3}, {"scenarios_covered": 1, "scenarios_total": 1}]
-        q = compute_quality(rows, ["A", "B", "C", "D"], gaps, matrix)
+        matrix = [{"requirement": "R1", "coverage": "Failed", "scenarios_covered": 2, "scenarios_total": 3},
+                  {"requirement": "R2", "coverage": "Not covered", "scenarios_covered": 1, "scenarios_total": 1}]
+        q = compute_quality(rows, ["R1", "R2"], gaps, matrix)
         kpis = {k["kpi"]: k["value"] for k in q["kpis"]}
         self.assertEqual(kpis["Requirements coverage"], "50.0%")
         self.assertEqual(kpis["Scenario coverage"], "75.0%")
-        self.assertEqual(kpis["Stories fully executed"], "25.0%")
         self.assertEqual(kpis["Execution rate"], "80.0%")
         self.assertEqual(kpis["Pass rate"], "25.0%")
-        self.assertEqual(kpis["Defect density"], "1.00")
+        self.assertEqual(kpis["POT evidence complete"], "66.7%")
         self.assertEqual(kpis["Critical + major share"], "50.0%")
-        self.assertEqual(kpis["Requirement gaps found early"], "4")
         self.assertEqual(kpis["Requirement gaps resolved"], "50.0%")
         self.assertEqual(kpis["Bug rejection rate"], "50.0%")
         self.assertEqual(kpis["Root cause recorded"], "50.0%")
-        self.assertEqual(q["pareto_by_root_cause"][0]["item"], "code")
+        self.assertEqual({p["item"] for p in q["pareto_by_module"]}, {"Declarations", "EDI"})
+        self.assertEqual(q["pareto_by_root_cause"][0]["count"], 1)
 
     def test_empty_run_does_not_divide_by_zero(self):
         q = compute_quality([], [], [], [])

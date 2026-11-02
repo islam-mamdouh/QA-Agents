@@ -1,11 +1,11 @@
-# QA Agents — ZATCA configuration
+# QA Agents — ZATCA Customs Clearance configuration
 
 Copy this file to `config.md` in the same folder and edit the YAML block below.
-`config.md` is git-ignored because it holds credentials.
+`config.md` is git-ignored. No credentials are needed and none may be written here:
+agents run through your Claude Code login, CR text is pasted by hand (no Jira integration)
+and all deliverables are local files.
 
-Secrets can be written directly or referenced as `${ENV_VAR}`. Environment variables are
-read from your shell, from `.env` in this folder, or from `.env` in the repository root.
-Relative paths (secrets, runs) are relative to this folder.
+Relative paths are relative to this folder (`projects/zatca/`).
 
 ```yaml
 # Agents run through the Claude Code CLI with your Claude login (subscription), no API key.
@@ -15,39 +15,38 @@ claude_code:
   timeout_seconds: 900          # max time for one agent call
 
 models:
-  main: claude-opus-5           # story analysis, test plan, test cases, report
-  reviewer: claude-sonnet-5     # all reviewers
+  main: claude-opus-5-5         # CR analysis, test plan, test cases, report rows, UAT summary
+  reviewer: claude-sonnet-5-5   # all reviewers
   max_tokens: 16000             # max output tokens per call
 
-jira:
-  base_url: https://your-company.atlassian.net
-  email: you@company.com
-  api_token: ${JIRA_API_TOKEN}
-  jql: project = ZATCA AND sprint in openSprints() AND issuetype = Story ORDER BY rank
-  max_stories: 50
-  description_max_chars: 2500           # long descriptions are trimmed to save tokens
-  acceptance_criteria_field: ""         # e.g. customfield_10045, leave empty if AC is in the description
-  dependency_link_types: [blocks]       # "blocks"-style link types: A blocks B  =>  B depends on A
+inputs:
+  crs_dir: crs                  # one file per CR: crs/<CR-ID>.md with the CR text copied from Jira
+  knowledge_dir: knowledge      # *.md system knowledge given to every agent (git-ignored, keep it short)
+  cr_max_chars: 30000           # longer CR text is trimmed (an incident is logged)
 
-google_sheets:
-  service_account_file: ./secrets/service_account.json
-  spreadsheet_id: your-spreadsheet-id   # from the sheet URL: /spreadsheets/d/<THIS>/edit
-  worksheet_prefix: ZATCA                  # tabs are created as "ZATCA Results <run-id>" and "ZATCA Summary <run-id>"
+# Shown in bug reports and the POT. Name only; never put credentials here.
+test_environment: QA environment
 
 flow:
   max_review_rounds: 3        # reviewer loop exit: no major issues, or this many rounds
   max_fire_back: 2            # times an agent is asked to fix an unusable reply
-  api_retries: 4              # retries for network / rate-limit / server errors (Claude, Jira, Sheets)
-  analysis_batch_size: 5      # stories per story-analysis call
-  cases_batch_size: 3         # stories per test-case-writing call
+  api_retries: 4              # retries for temporary Claude Code errors
+  cases_batch_size: 4         # CR requirements per test-case-writing call
   report_batch_size: 40       # result rows per report call
   runs_dir: runs
-  strict_results: true        # error-proofing: Fail rows need actual_result, bug_id and root_cause
+  strict_results: true        # error-proofing: executed cases need evidence; Fail needs actual_result, bug_id, root_cause
 
-# Short product description given to every agent. Keep it brief: it is sent with every call.
+# Short product description given to every agent (sent with every call, keep it brief).
+# Put detailed system knowledge (screens, EDI message types, DB tables and status codes)
+# in knowledge/*.md instead; that folder is git-ignored.
 project_context: |
-  ZATCA e-invoicing (Fatoora) for Saudi Arabia, tested for QPros. Covers standard (B2B) and
-  simplified (B2C) tax invoices, credit and debit notes, UBL 2.1 XML, QR codes, cryptographic
-  stamps, device onboarding (CSID), clearance and reporting flows, and 15% VAT calculations.
-  Compliance with ZATCA rules, correct totals and rejection handling are business critical.
+  ZATCA Customs Clearance: the Fasah platform and the connected customs systems (Saudi Arabia).
+  Shipment journey: the shipping agent files the manifest (vessel, route, containers, bills of
+  lading) -> EDI message and customs reply (A accepted / R rejected) -> the broker files an import,
+  export or transit declaration linked to a B/L -> back-office receiving (accept/reject, container
+  selection, inspection group) -> inspection, samples and X-ray -> customs fee collection -> release.
+  Transit adds entry-port steps (truck entry movement, inspection and sealing, X-ray) and exit-port
+  steps (exit movement, gate pass, closing).
+  Users: brokers, shipping agents, receiving officers, inspectors. Wrong status, blocked clearance,
+  wrong release and wrong fees are business critical.
 ```
