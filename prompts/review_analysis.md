@@ -1,6 +1,7 @@
 ## What to check (story analysis)
-- Every acceptance criterion in the source appears and is testable.
-- Scenarios cover positive, negative and edge cases, and integration with depends_on stories.
-- Priorities make sense: money, data, security and the core flow are high.
-- Nothing is invented beyond the story; derived criteria are marked "(derived)".
-- Real ambiguities in the story are listed as questions.
+- Every statement of the story is covered by a requirement; nothing is invented.
+- The flow steps and systems match what the story changes.
+- Scenarios cover positive, negative (including validations) and boundary cases for each requirement.
+- Priorities and risk ratings make sense: a blocked core flow, wrong data, money or security are high.
+- Unclear rules are raised as questions with who must confirm them, not assumed.
+- Regression areas name existing features that the change can really affect.

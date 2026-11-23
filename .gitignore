@@ -2,9 +2,15 @@ config.md
 .env
 secrets/
 runs/
+monthly/
+escaped_defects.csv
 __pycache__/
 *.pyc
 .venv/
-escaped_defects.csv
-monthly/
 .DS_Store
+
+# User stories and internal system knowledge stay on your machine only
+workspace/stories/*
+!workspace/stories/README.md
+workspace/knowledge/*
+!workspace/knowledge/README.md

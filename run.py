@@ -1,35 +1,37 @@
 #!/usr/bin/env python3
-"""QA agents for the ZATCA project - command line.
+"""QA agents - manual testing workflow driven by user stories - command line.
 
-  python3 run.py check                              test config, Claude Code login, Jira and Google Sheets access
-  python3 run.py design [--jql "..."]               new run: stories -> analysis -> plan -> test cases (steps 1-13)
-  python3 run.py resume [--run ID]                  continue a stopped run from its last checkpoint
-  python3 run.py report [--run ID] [--results FILE] your results -> report -> Google Sheets (steps 14-15)
-  python3 run.py status [--run ID]                  show steps, review rounds, tokens and incidents
-  python3 run.py monthly [--month YYYY-MM]          monthly quality report: KPIs and trend, defect leakage,
-                                                    control chart, Pareto, process audit
+One run = one user story. Paste the story text (from Jira, Azure DevOps or any tool) into
+workspace/stories/<STORY-ID>.md first; there is no tracker integration.
 
-Config, credentials and runs live in projects/zatca/. Without --run, the latest run is used.
+  python3 run.py check                               test config and the Claude Code login
+  python3 run.py design --story STORY-ID [--file F]  story analysis -> test plan -> test cases
+  python3 run.py resume [--run ID | --story ID]      continue a stopped run from its last checkpoint
+  python3 run.py report [--run ID | --story ID] [--results FILE]
+                                                     results -> POT, bug reports, UAT summary, quality
+  python3 run.py status [--run ID | --story ID]      show steps, review rounds, tokens and incidents
+  python3 run.py monthly [--month YYYY-MM]           monthly quality report: KPIs and trend, defect
+                                                     leakage, control chart per build, Pareto, audit
+
+Without --run or --story, the latest run is used. Everything lives in workspace/.
 """
 import argparse
 import sys
 import traceback
 from pathlib import Path
 
-from qa_flow.config import ConfigError, load_config, require
+from qa_flow.config import ConfigError, load_config
+from qa_flow.intake import IntakeError, story_path
 from qa_flow.llm import LLM
 from qa_flow.orchestrator import Orchestrator
 from qa_flow.store import RunStore
 
 
 def cmd_check(cfg: dict) -> None:
-    import gspread
-    import requests
-
     def check(name, fn):
         try:
-            fn()
-            print(f"  OK    {name}")
+            result = fn()
+            print(f"  OK    {name}" + (f": {result}" if isinstance(result, str) else ""))
         except Exception as error:  # noqa: BLE001 - report any problem
             print(f"  FAIL  {name}: {str(error)[:200]}")
 
@@ -41,18 +43,20 @@ def cmd_check(cfg: dict) -> None:
         check(f"Claude Code, {role} model ({model})",
               lambda: llm.ask_json(model, 'Reply with ONLY this JSON: {"ok":true}', "ping", "check"))
 
-    def jira():
-        r = requests.get(require(cfg, "jira.base_url").rstrip("/") + "/rest/api/3/myself", timeout=30,
-                         auth=(require(cfg, "jira.email"), require(cfg, "jira.api_token")))
-        r.raise_for_status()
-    check("Jira login", jira)
-    check("Google Sheet access", lambda: gspread.service_account(
-        filename=require(cfg, "google_sheets.service_account_file")).open_by_key(require(cfg, "google_sheets.spreadsheet_id")))
+    def stories():
+        folder = Path(cfg["inputs"]["stories_dir"])
+        if not folder.is_dir():
+            raise FileNotFoundError(f"{folder} does not exist; create it and add one <STORY-ID>.md per story")
+        return f"{len(list(folder.glob('*.md')))} story file(s) in {folder}"
+    check("Stories folder", stories)
+    check("System knowledge", lambda: f"{len(cfg['knowledge'])} characters loaded from {cfg['inputs']['knowledge_dir']}"
+          if cfg["knowledge"] else "none (optional: add *.md files to the knowledge folder)")
 
 
 def cmd_status(store: RunStore) -> None:
     s = store.state
-    print(f"Run {s['run_id']}  phase={s['phase']}  status={s['status']}  current step={s.get('current_step')}")
+    print(f"Run {s['run_id']}  story={s.get('story')}  phase={s['phase']}  status={s['status']}  "
+          f"current step={s.get('current_step')}")
     if s.get("last_error"):
         print(f"Last error: {s['last_error']}")
     for key, step in s["steps"].items():
@@ -73,21 +77,20 @@ def cmd_monthly(cfg: dict, month: str | None) -> int:
         print(f"Monthly report error: {error}")
         return 2
     if not out["runs"]:
-        print(f"No finished runs in {out['month']}. Escaped defects file: {out['escaped_file']}")
-    print(f"Monthly report {out['month']} ({out['runs']} runs): {out['report']}")
-    if out["url"]:
-        print(f"Google Sheets: {out['url']}")
-    print(f"Add bugs found after release to: {out['escaped_file']}")
+        print(f"No finished story reports in {out['month']}.")
+    print(f"Monthly report {out['month']} ({out['runs']} story runs): {out['report']}\nExcel: {out['excel']}")
+    print(f"Add defects found after release (with root cause and 5 Whys) to: {out['escaped_file']}")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["check", "design", "resume", "report", "status", "monthly"])
-    parser.add_argument("--run", help="run id (folder name in projects/zatca/runs/); default: latest")
-    parser.add_argument("--jql", help="override the JQL from config.md (design only)")
+    parser.add_argument("--story", help="user story id, e.g. US-1234 (design: required; other commands: its latest run)")
+    parser.add_argument("--file", help="design only: story text file; default: workspace/stories/<STORY-ID>.md")
+    parser.add_argument("--run", help="run id (folder name in workspace/runs/); default: latest")
     parser.add_argument("--month", help="monthly only: YYYY-MM; default: the current month")
-    parser.add_argument("--results", help="results file (report only); default: runs/<id>/results.csv")
+    parser.add_argument("--results", help="report only: results file; default: runs/<id>/results.csv")
     args = parser.parse_args()
 
     try:
@@ -95,7 +98,6 @@ def main() -> int:
     except ConfigError as error:
         print(f"Config error: {error}")
         return 2
-    query = args.jql
 
     if args.command == "check":
         cmd_check(cfg)
@@ -104,7 +106,21 @@ def main() -> int:
         return cmd_monthly(cfg, args.month)
 
     runs_dir = cfg["flow"]["runs_dir"]
-    store = RunStore.create(runs_dir) if args.command == "design" else RunStore.open(runs_dir, args.run)
+    try:
+        if args.command == "design":
+            if not args.story:
+                print("design needs --story, e.g. python3 run.py design --story US-1234")
+                return 2
+            path = Path(args.file) if args.file else story_path(cfg["inputs"]["stories_dir"], args.story)
+            if not path.exists():
+                print(f"Story file not found: {path}\nCopy the user story text into it, then run again.")
+                return 2
+            store = RunStore.create(runs_dir, args.story)
+        else:
+            store = RunStore.open(runs_dir, args.run, args.story)
+    except (FileNotFoundError, IntakeError) as error:
+        print(error)
+        return 2
     if args.command == "status":
         cmd_status(store)
         return 0
@@ -113,18 +129,18 @@ def main() -> int:
     orchestrator = Orchestrator(cfg, store)
     try:
         if args.command == "design":
-            store.set(query=query)
-            orchestrator.design(query)
+            store.set(story_file=args.file)
+            orchestrator.design(args.story, args.file)
         elif args.command == "report":
             orchestrator.report(args.results)
         else:  # resume: continue whatever phase was running
             if store.state["phase"] == "report":
                 orchestrator.report(store.state.get("results_file"))
             elif store.state["status"] == "waiting_for_results":
-                print("Design is finished. Fill in results.csv, then run: "
+                print("Design is finished. Run the test cases, fill in results.csv, then run: "
                       f"python3 run.py report --run {store.dir.name}")
             else:
-                orchestrator.design(store.state.get("query", store.state.get("jql")))
+                orchestrator.design(store.state["story"], store.state.get("story_file"))
         return 0
     except KeyboardInterrupt:
         store.set(status="stopped")

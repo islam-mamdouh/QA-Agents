@@ -1,4 +1,4 @@
-"""One retry helper shared by Claude, Jira and Google Sheets calls."""
+"""One retry helper for temporary errors (used for Claude Code calls)."""
 import time
 
 
