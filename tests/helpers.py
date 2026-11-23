@@ -24,7 +24,7 @@ def base_cfg(runs_dir: Path | None = None) -> dict:
     root = temp_dir()
     return {
         "models": {"main": "main-model", "reviewer": "review-model", "max_tokens": 1000},
-        "inputs": {"crs_dir": str(root / "crs"), "knowledge_dir": str(root / "knowledge"), "cr_max_chars": 30000},
+        "inputs": {"stories_dir": str(root / "stories"), "knowledge_dir": str(root / "knowledge"), "story_max_chars": 30000},
         "test_environment": "QA environment",
         "project_context": "test product",
         "knowledge": "",

@@ -1,7 +1,7 @@
-"""Loads projects/zatca/config.md (a YAML block inside markdown) and fills ${ENV_VAR} values.
+"""Loads workspace/config.md (a YAML block inside markdown) and fills ${ENV_VAR} values.
 
-No credentials are needed: agents run through the Claude Code login, CR text is pasted into files
-by hand (no Jira integration) and all deliverables are local Excel / markdown files.
+No credentials are needed: agents run through the Claude Code login, user stories are pasted into
+files by hand (no tracker integration) and all deliverables are local Excel / markdown files.
 """
 import os
 import re
@@ -10,21 +10,21 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-FOLDER = ROOT / "projects" / "zatca"   # config.md, crs/, knowledge/, runs/ for the ZATCA customs project
+FOLDER = ROOT / "workspace"   # config.md, stories/, knowledge/, runs/ for the system under test
 
 FLOW_DEFAULTS = {
     "max_review_rounds": 3,
     "max_fire_back": 2,
     "api_retries": 4,
-    "cases_batch_size": 4,       # CR requirements per test-case-writing call
+    "cases_batch_size": 4,       # story requirements per test-case-writing call
     "report_batch_size": 40,
     "runs_dir": "runs",
     "strict_results": True,
 }
 INPUT_DEFAULTS = {
-    "crs_dir": "crs",            # one text file per CR: crs/<CR-ID>.md
+    "stories_dir": "stories",      # one text file per user story: stories/<STORY-ID>.md
     "knowledge_dir": "knowledge",  # *.md system knowledge given to every agent (keep it short)
-    "cr_max_chars": 30000,
+    "story_max_chars": 30000,
 }
 
 
@@ -55,7 +55,7 @@ def _expand_env(value):
 
 
 def _in_folder(value: str) -> str:
-    """Relative paths in config.md are relative to projects/zatca/."""
+    """Relative paths in config.md are relative to workspace/."""
     path = Path(value).expanduser()
     return str(path if path.is_absolute() else (FOLDER / path).resolve())
 
@@ -89,7 +89,7 @@ def load_config() -> dict:
     cfg["flow"] = {**FLOW_DEFAULTS, **(cfg.get("flow") or {})}
     cfg["flow"]["runs_dir"] = _in_folder(cfg["flow"]["runs_dir"])
     cfg["inputs"] = {**INPUT_DEFAULTS, **(cfg.get("inputs") or {})}
-    for key in ("crs_dir", "knowledge_dir"):
+    for key in ("stories_dir", "knowledge_dir"):
         cfg["inputs"][key] = _in_folder(cfg["inputs"][key])
     cfg["test_environment"] = str(cfg.get("test_environment") or "QA environment").strip()
     cfg["project_context"] = (cfg.get("project_context") or "").strip()
@@ -103,5 +103,5 @@ def require(cfg: dict, dotted: str):
     for part in dotted.split("."):
         node = node.get(part) if isinstance(node, dict) else None
     if node in (None, ""):
-        raise ConfigError(f"'{dotted}' is empty in projects/zatca/config.md")
+        raise ConfigError(f"'{dotted}' is empty in workspace/config.md")
     return node

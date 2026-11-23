@@ -9,8 +9,8 @@ __pycache__/
 .venv/
 .DS_Store
 
-# Client documents and internal system knowledge stay on your machine only
-projects/zatca/crs/*
-!projects/zatca/crs/README.md
-projects/zatca/knowledge/*
-!projects/zatca/knowledge/README.md
+# User stories and internal system knowledge stay on your machine only
+workspace/stories/*
+!workspace/stories/README.md
+workspace/knowledge/*
+!workspace/knowledge/README.md

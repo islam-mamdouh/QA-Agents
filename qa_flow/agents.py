@@ -1,9 +1,9 @@
 """Agents = a prompt file in prompts/ + a model.
 
-Main agents (Opus) write: cr_analysis, test_plan, test_cases, report_rows, uat_summary, monthly_summary.
+Main agents (Opus) write: story_analysis, test_plan, test_cases, report_rows, uat_summary, monthly_summary.
 Reviewer agents (Sonnet) check: reviewer_base.md + review_<stage>.md.
 Every agent also gets prompts/project_rules.md, the product context from config.md and the
-system knowledge files from projects/zatca/knowledge/.
+system knowledge files from workspace/knowledge/.
 To change what an agent does, edit its prompt file. No code change needed.
 """
 import json

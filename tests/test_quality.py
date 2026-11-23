@@ -31,9 +31,9 @@ class QualityTest(unittest.TestCase):
         self.assertEqual(pareto(Counter()), [])
 
     def test_kpis(self):
-        rows = [row("Declarations", "Pass", evidence="a.png"),
-                row("Declarations", "Fail", severity="critical", root_cause="code", bug_status="rejected", evidence="b.png"),
-                row("EDI", "Fail", severity="minor", bug_status="fixed"), row("EDI", "Blocked"), row("EDI", "Not Run")]
+        rows = [row("Payments", "Pass", evidence="a.png"),
+                row("Payments", "Fail", severity="critical", root_cause="code", bug_status="rejected", evidence="b.png"),
+                row("Notifications", "Fail", severity="minor", bug_status="fixed"), row("Notifications", "Blocked"), row("Notifications", "Not Run")]
         gaps = [{"status": "open"}, {"status": "answered"}, {"status": "closed"}, {"status": "open"}]
         matrix = [{"requirement": "R1", "coverage": "Failed", "scenarios_covered": 2, "scenarios_total": 3},
                   {"requirement": "R2", "coverage": "Not covered", "scenarios_covered": 1, "scenarios_total": 1}]
@@ -48,7 +48,7 @@ class QualityTest(unittest.TestCase):
         self.assertEqual(kpis["Requirement gaps resolved"], "50.0%")
         self.assertEqual(kpis["Bug rejection rate"], "50.0%")
         self.assertEqual(kpis["Root cause recorded"], "50.0%")
-        self.assertEqual({p["item"] for p in q["pareto_by_module"]}, {"Declarations", "EDI"})
+        self.assertEqual({p["item"] for p in q["pareto_by_module"]}, {"Payments", "Notifications"})
         self.assertEqual(q["pareto_by_root_cause"][0]["count"], 1)
 
     def test_empty_run_does_not_divide_by_zero(self):

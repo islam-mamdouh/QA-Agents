@@ -1,6 +1,6 @@
-"""Risk-based testing: every CR requirement gets a risk score = impact x likelihood (each 1-5).
+"""Risk-based testing: every story requirement gets a risk score = impact x likelihood (each 1-5).
 
-The CR analysis agent rates impact and likelihood; the score and level are calculated here,
+The story analysis agent rates impact and likelihood; the score and level are calculated here,
 so they are always consistent. Higher-risk requirements are tested first and more deeply.
 """
 LEVELS = ((15, "high"), (8, "medium"), (1, "low"))  # score >= 15 high, >= 8 medium, else low

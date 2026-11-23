@@ -1,12 +1,12 @@
 # Root Cause Analysis - 5 Whys
 
 Use for every escaped defect (found in UAT or production) and every critical defect.
-Record the result in `projects/zatca/escaped_defects.csv` (`root_cause` and `five_whys` columns)
+Record the result in `workspace/escaped_defects.csv` (`root_cause` and `five_whys` columns)
 so the monthly report can check it.
 
 | Field | Value |
 |---|---|
-| Bug ID / CR | |
+| Bug ID / user story | |
 | Found by / when | UAT / production / testing - date |
 | Severity | |
 | Module / system | |
@@ -25,7 +25,7 @@ What happened, where, and the impact (one or two sentences).
 requirements / code / environment / data / test / people
 
 ## Why was it not caught earlier?
-Which review or test should have caught it (CR review, test case, regression, UAT)?
+Which review or test should have caught it (story review, test case, regression, UAT)?
 
 ## Actions
 | Action | Type (correct / prevent) | Owner | Due date | Status |

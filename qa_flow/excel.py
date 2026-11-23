@@ -1,6 +1,7 @@
 """Writes the Excel deliverables (test cases, POT, monthly report). Edit here to change columns or style.
 
-Test case columns match the Jira test fields, so each row can be entered into Jira by hand.
+Test case columns are the usual test-case fields of Jira, Azure DevOps and similar tools,
+so each row can be entered or imported by hand.
 """
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -23,7 +24,7 @@ STATUS_FILLS = {"Pass": "D9F0D9", "Fail": "FAD6D6", "Blocked": "FFEDCC", "Skippe
 
 
 def as_text(value) -> str:
-    """Lists become numbered lines (steps) or bullet lines, so cells read well in Excel and Jira."""
+    """Lists become numbered lines (steps) or bullet lines, so cells read well in Excel and in your tracker."""
     if isinstance(value, list):
         return "\n".join(f"{n}. {v}" for n, v in enumerate(value, 1))
     return "" if value is None else str(value)

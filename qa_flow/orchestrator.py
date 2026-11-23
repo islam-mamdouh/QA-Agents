@@ -1,13 +1,13 @@
-"""Orchestrator: runs the agents in order for one Change Request (CR), owns the review loops
+"""Orchestrator: runs the agents in order for one user story, owns the review loops
 and the checkpoints.
 
-Design phase (`python3 run.py design --cr CR-ID`):
-  01 CR intake (your pasted CR text, no Jira access) -> 02 CR analysis (+review)
+Design phase (`python3 run.py design --story STORY-ID`):
+  01 story intake (your pasted story text, no tracker access) -> 02 story analysis (+review)
   -> 03 test plan (+review) -> 04 test cases (+review)
-  -> test_cases.xlsx (Jira test fields), cr_analysis.md, requirement gaps, results.csv; then pauses.
+  -> test_cases.xlsx (standard test-case fields), story_analysis.md, requirement gaps, results.csv; then pauses.
 Report phase (`python3 run.py report`), after you ran the cases and filled results.csv:
   05 report rows -> 06 UAT summary
-  -> pot.xlsx (proof of testing), bug_reports.md (ready for Jira), uat_summary.md, quality.md.
+  -> pot.xlsx (proof of testing), bug_reports.md (ready to paste into your tracker), uat_summary.md, quality.md.
 
 Every step is saved when it finishes, and every review round is saved too,
 so `python3 run.py resume` continues from the exact point where a run stopped.
@@ -19,7 +19,7 @@ from pathlib import Path
 from . import render
 from .agents import Agents
 from .excel import POT_COLUMNS, TEST_CASE_COLUMNS, simple_columns, rows_from_lists, test_case_row, write_workbook
-from .intake import cr_path, read_cr
+from .intake import story_path, read_story
 from .llm import LLM
 from .quality import compute_quality
 from .results import STATUS_ORDER, read_results, write_template
@@ -66,7 +66,7 @@ def check_analysis(data: dict) -> None:
         bad = [s.get("id") for s in r["scenarios"] if s.get("type") not in CASE_TYPES]
         if bad:
             raise ValueError(f"requirement '{r['id']}': scenario type must be one of {', '.join(CASE_TYPES)} ({bad})")
-    for name in ("journey_stages", "systems", "regression_areas", "questions"):
+    for name in ("flow_steps", "systems", "regression_areas", "questions"):
         if not isinstance(data.get(name), list):
             raise ValueError(f"'{name}' must be a list (it can be empty)")
     check_risk(data)
@@ -99,7 +99,7 @@ def check_cases(ids: list):
 
 
 def requirements_with_regression(analysis: dict) -> list:
-    """CR requirements (with calculated risk) plus one pseudo requirement for the regression areas."""
+    """Story requirements (with calculated risk) plus one pseudo requirement for the regression areas."""
     reqs = [{**r, "risk": {**rate(r["risk_impact"], r["risk_likelihood"]), "reason": r.get("risk_reason", "")}}
             for r in analysis["requirements"]]
     areas = [a for a in analysis.get("regression_areas", []) if a.get("area")]
@@ -178,24 +178,24 @@ class Orchestrator:
                 for i in step.get("issues", []) if i["severity"] == "major"]
 
     # ---- design phase ------------------------------------------------------
-    def design(self, cr_id: str, cr_file: str | None = None) -> None:
-        self.store.set(phase="design", status="running", cr=cr_id)
+    def design(self, story_id: str, story_file: str | None = None) -> None:
+        self.store.set(phase="design", status="running", story=story_id)
         inputs = self.cfg["inputs"]
-        path = Path(cr_file) if cr_file else cr_path(inputs["crs_dir"], cr_id)
-        cr = self._step("01_cr", lambda: read_cr(cr_id, path, int(inputs["cr_max_chars"]), self.store))
-        print(f"   {cr['id']}: {cr['title']}")
+        path = Path(story_file) if story_file else story_path(inputs["stories_dir"], story_id)
+        story = self._step("01_story", lambda: read_story(story_id, path, int(inputs["story_max_chars"]), self.store))
+        print(f"   {story['id']}: {story['title']}")
 
-        analysis = self._reviewed("02_analysis", "cr_analysis", "analysis",
-                                  {"cr": {k: cr[k] for k in ("id", "title", "text")}}, check_analysis)
+        analysis = self._reviewed("02_analysis", "story_analysis", "analysis",
+                                  {"story": {k: story[k] for k in ("id", "title", "text")}}, check_analysis)
         requirements = requirements_with_regression(analysis)
-        plan = self._plan(cr, analysis, requirements)
-        cases = self._cases(cr, plan, requirements)
+        plan = self._plan(story, analysis, requirements)
+        cases = self._cases(story, plan, requirements)
 
-        gaps = write_gaps(self.store.dir / "requirement_gaps.csv", collect_gaps(cr["id"], analysis.get("questions", [])))
+        gaps = write_gaps(self.store.dir / "requirement_gaps.csv", collect_gaps(story["id"], analysis.get("questions", [])))
         matrix = build_matrix(requirements, cases, gaps=gaps)
-        self.store.write_text("cr_analysis.md", render.cr_analysis_md(cr, analysis, requirements, gaps,
+        self.store.write_text("story_analysis.md", render.story_analysis_md(story, analysis, requirements, gaps,
                                                                       self._notes("02_analysis")))
-        self.store.write_text("test_plan.md", render.test_plan_md(cr, plan, requirements, self._notes("03_test_plan")))
+        self.store.write_text("test_plan.md", render.test_plan_md(story, plan, requirements, self._notes("03_test_plan")))
         write_workbook(self.store.dir / "test_cases.xlsx", [
             ("Test Cases", TEST_CASE_COLUMNS, [test_case_row(c) for c in cases], None),
             ("Traceability", MATRIX_COLUMNS, matrix, None),
@@ -209,15 +209,15 @@ class Orchestrator:
         self.store.set(status="waiting_for_results", current_step=None)
         d = self.store.dir
         print(f"\nDone: {len(cases)} test cases, {len(gaps)} gaps for the BA/dev team."
-              f"\n  Test cases (enter into Jira): {d / 'test_cases.xlsx'}"
-              f"\n  CR analysis and gaps:         {d / 'cr_analysis.md'}  (answers go in requirement_gaps.csv)"
+              f"\n  Test cases (enter into tracker): {d / 'test_cases.xlsx'}"
+              f"\n  Story analysis and gaps:         {d / 'story_analysis.md'}  (answers go in requirement_gaps.csv)"
               f"\n  Fill in after testing:        {d / 'results.csv'}"
               f"\n  Then run:                     python3 run.py report --run {d.name}")
 
-    def _plan(self, cr: dict, analysis: dict, requirements: list) -> dict:
+    def _plan(self, story: dict, analysis: dict, requirements: list) -> dict:
         ids = [r["id"] for r in requirements]
-        task = {"cr": {"id": cr["id"], "title": cr["title"]}, "summary": analysis.get("summary", ""),
-                "journey_stages": analysis.get("journey_stages", []), "systems": analysis.get("systems", []),
+        task = {"story": {"id": story["id"], "title": story["title"]}, "summary": analysis.get("summary", ""),
+                "flow_steps": analysis.get("flow_steps", []), "systems": analysis.get("systems", []),
                 "test_data_needed": analysis.get("test_data_needed", []),
                 "requirements": [{"id": r["id"], "text": r["text"],
                                   "risk": r["risk"] and {"score": r["risk"]["score"], "level": r["risk"]["level"]},
@@ -228,13 +228,13 @@ class Orchestrator:
         plan["execution_order"] += [i for i in ids if i not in plan["execution_order"]]
         return plan
 
-    def _cases(self, cr: dict, plan: dict, requirements: list) -> list:
+    def _cases(self, story: dict, plan: dict, requirements: list) -> list:
         by_id = {r["id"]: r for r in requirements}
         focus = {p.get("id"): p.get("focus", "") for p in plan.get("requirement_plans", [])}
         shared = {k: plan[k] for k in ("approach", "systems_and_environments", "test_data_preparation") if k in plan}
         per_req = {}
         for i, batch in enumerate(chunk(plan["execution_order"], self.flow["cases_batch_size"]), 1):
-            task = {"cr": {"id": cr["id"], "title": cr["title"]}, "plan": shared,
+            task = {"story": {"id": story["id"], "title": story["title"]}, "plan": shared,
                     "requirements": [{**{k: v for k, v in by_id[rid].items() if k not in ("risk_reason",)},
                                       "focus": focus.get(rid, "")} for rid in batch]}
             result = self._reviewed(f"04_cases_b{i:02d}", "test_cases", "test_cases", task, check_cases(batch))
@@ -246,7 +246,7 @@ class Orchestrator:
         for rid in plan["execution_order"]:
             for case in per_req.get(rid, []):
                 n += 1
-                cases.append({**case, "id": f"{cr['id']}-TC-{n:03d}", "requirement": rid})
+                cases.append({**case, "id": f"{story['id']}-TC-{n:03d}", "requirement": rid})
         self.store.save("test_cases", cases)
         self.store.save("requirements", requirements)
         return cases
@@ -257,7 +257,7 @@ class Orchestrator:
         if cases is None:
             raise WorkflowError("This run has no test cases yet. Finish the design phase first (resume).")
         self.store.set(phase="report", status="running", current_step="report")
-        cr = self.store.load("01_cr")
+        story = self.store.load("01_story")
         requirements = self.store.load("requirements") or []
         analysis = self.store.load("02_analysis") or {}
         plan = self.store.load("03_test_plan") or {}
@@ -305,8 +305,8 @@ class Orchestrator:
         open_questions = [{k: g[k] for k in ("gap_id", "requirement", "question", "confirm_with")}
                           for g in gaps if g["status"] == "open"]
         summary = self._step("06_uat_summary", lambda: self.agents.write("uat_summary", {
-            "cr": {"id": cr["id"], "title": cr["title"]},
-            "what_changed": {"summary": analysis.get("summary", ""), "journey_stages": analysis.get("journey_stages", []),
+            "story": {"id": story["id"], "title": story["title"]},
+            "what_changed": {"summary": analysis.get("summary", ""), "flow_steps": analysis.get("flow_steps", []),
                              "systems": analysis.get("systems", []),
                              "requirements": [{"id": r["id"], "text": r["text"]} for r in requirements]},
             "how_tested": {"approach": plan.get("approach", ""), "systems": plan.get("systems_and_environments", []),
@@ -317,24 +317,24 @@ class Orchestrator:
         }, "06_uat_summary"))
 
         d = self.store.dir
-        self.store.save("report_data", {"run_id": d.name, "cr": cr["id"], "rows": rows, "stats": stats,
+        self.store.save("report_data", {"run_id": d.name, "story": story["id"], "rows": rows, "stats": stats,
                                         "quality": quality, "gaps": gaps, "matrix": matrix, "summary": summary})
         write_workbook(d / "pot.xlsx", [
-            (f"POT {cr['id']}", POT_COLUMNS, rows, "status"),
+            (f"POT {story['id']}", POT_COLUMNS, rows, "status"),
             ("Traceability", MATRIX_COLUMNS, matrix, None),
             ("Summary", simple_columns(["Item", "Value"], 40),
-             rows_from_lists([["CR", f"{cr['id']} - {cr['title']}"], ["Environment", self.cfg["test_environment"]],
+             rows_from_lists([["User story", f"{story['id']} - {story['title']}"], ["Environment", self.cfg["test_environment"]],
                               ["Test cases", stats["total"]], ["Executed", stats["executed"]],
                               ["Pass rate", stats["pass_rate"]]]
                              + [[s, n] for s, n in stats["by_status"].items()]), None),
         ])
         self.store.write_text("bug_reports.md", render.bug_reports_md(rows, cases, self.cfg["test_environment"]))
-        self.store.write_text("uat_summary.md", render.uat_summary_md(cr, summary, stats, open_bugs, open_questions))
-        self.store.write_text("quality.md", render.quality_md(cr, stats, quality, matrix, rows))
+        self.store.write_text("uat_summary.md", render.uat_summary_md(story, summary, stats, open_bugs, open_questions))
+        self.store.write_text("quality.md", render.quality_md(story, stats, quality, matrix, rows))
         self.store.set(status="done", current_step=None)
-        print(f"\nReport ready for {cr['id']}:"
+        print(f"\nReport ready for {story['id']}:"
               f"\n  POT (proof of testing): {d / 'pot.xlsx'}"
-              f"\n  Bug reports for Jira:   {d / 'bug_reports.md'}"
+              f"\n  Bug reports for tracker: {d / 'bug_reports.md'}"
               f"\n  UAT meeting summary:    {d / 'uat_summary.md'}"
               f"\n  Quality (KPIs, Pareto): {d / 'quality.md'}")
 

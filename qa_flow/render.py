@@ -1,6 +1,6 @@
 """Turns agent JSON into readable markdown files. Edit here to change how outputs look.
 
-All deliverables are in English: CR analysis, test plan, bug reports (ready to paste into Jira),
+All deliverables are in English: story analysis, test plan, bug reports (ready to paste into your tracker),
 UAT meeting summary, quality report and monthly report.
 """
 
@@ -32,10 +32,10 @@ def notes_md(issues: list) -> str:
     return "# Reviewer notes on the test cases (not fixed)\n" + _notes(issues)
 
 
-def cr_analysis_md(cr: dict, analysis: dict, requirements: list, gaps: list, notes: list) -> str:
-    out = [f"# CR Analysis - {cr['id']}: {cr['title']}", "",
+def story_analysis_md(story: dict, analysis: dict, requirements: list, gaps: list, notes: list) -> str:
+    out = [f"# Story Analysis - {story['id']}: {story['title']}", "",
            "## Summary", analysis.get("summary", ""), "",
-           "## Shipment journey stages touched", _bullets(analysis.get("journey_stages")), "",
+           "## Business flow steps touched", _bullets(analysis.get("flow_steps")), "",
            "## Systems touched", _bullets(analysis.get("systems")), "",
            "## Requirements (risk = impact x likelihood)"]
     for r in requirements:
@@ -62,10 +62,10 @@ def cr_analysis_md(cr: dict, analysis: dict, requirements: list, gaps: list, not
     return "\n".join(out) + "\n" + _notes(notes)
 
 
-def test_plan_md(cr: dict, plan: dict, requirements: list, notes: list) -> str:
+def test_plan_md(story: dict, plan: dict, requirements: list, notes: list) -> str:
     risks = {r["id"]: r.get("risk") for r in requirements}
     parts = [
-        f"# Test Plan - {cr['id']}: {cr['title']}", "",
+        f"# Test Plan - {story['id']}: {story['title']}", "",
         "## Approach", plan.get("approach", ""), "",
         "## In scope", _bullets(plan.get("in_scope")), "",
         "## Out of scope", _bullets(plan.get("out_of_scope")), "",
@@ -83,13 +83,13 @@ def test_plan_md(cr: dict, plan: dict, requirements: list, notes: list) -> str:
 
 
 def bug_reports_md(rows: list, cases: list, environment: str) -> str:
-    """Ready-to-paste Jira bug reports for every failed case, built from the test case (no tokens).
+    """Ready-to-paste bug reports for every failed case, built from the test case (no tokens).
 
     Mandatory fields are always present (error-proofing); a critical bug also gets a 5 Whys block.
     """
     by_id = {c["id"]: c for c in cases}
     out = ["# Bug Reports", "",
-           "One report per failed test case, ready to paste into Jira. Attach the evidence files named below.", ""]
+           "One report per failed test case, ready to paste into your tracker (Jira, Azure DevOps...). Attach the evidence files named below.", ""]
     failed = [r for r in rows if r["status"] == "Fail"]
     if not failed:
         return "\n".join(out + ["No failed test cases."]) + "\n"
@@ -118,9 +118,9 @@ def bug_reports_md(rows: list, cases: list, environment: str) -> str:
     return "\n".join(out) + "\n"
 
 
-def uat_summary_md(cr: dict, s: dict, stats: dict, open_bugs: list, open_questions: list) -> str:
+def uat_summary_md(story: dict, s: dict, stats: dict, open_bugs: list, open_questions: list) -> str:
     st = stats["by_status"]
-    out = [f"# UAT Meeting Summary - {cr['id']}: {cr['title']}", "",
+    out = [f"# UAT Meeting Summary - {story['id']}: {story['title']}", "",
            "## What changed", _bullets(s.get("what_changed")), "",
            "## How it was tested", _bullets(s.get("how_tested")), "",
            "## Results", s.get("results", ""), "",
@@ -141,9 +141,9 @@ def uat_summary_md(cr: dict, s: dict, stats: dict, open_bugs: list, open_questio
     return "\n".join(out) + "\n"
 
 
-def quality_md(cr: dict, stats: dict, quality: dict, matrix: list, rows: list) -> str:
+def quality_md(story: dict, stats: dict, quality: dict, matrix: list, rows: list) -> str:
     from .traceability import MATRIX_COLUMNS
-    out = [f"# Quality Report - {cr['id']}", "",
+    out = [f"# Quality Report - {story['id']}", "",
            "## KPIs", "| KPI | Value | What it means |", "|---|---|---|"]
     out += [f"| {k['kpi']} | {k['value']} | {_cell(k['meaning'])} |" for k in quality["kpis"]]
     for title, key in (("Pareto - failed cases by module", "pareto_by_module"),
@@ -183,9 +183,9 @@ def monthly_md(month: str, m: dict) -> str:
                 for p in m[key]] or ["| none | | | | |"]
     out += ["", "## Severity", "| Severity | In testing | Escaped |", "|---|---|---|"]
     out += [f"| {r['severity']} | {r['testing']} | {r['escaped']} |" for r in m["severity"]]
-    out += ["", "## Escaped defects", "| Date | Bug | CR | Title | Severity | Module | Root cause | 5 Whys | Found by |",
+    out += ["", "## Escaped defects", "| Date | Bug | Story | Title | Severity | Module | Root cause | 5 Whys | Found by |",
             "|---|---|---|---|---|---|---|---|---|"]
-    out += [f"| {e['date']} | {e['bug_id']} | {e['cr']} | {_cell(e['title'])} | {e['severity']} | {e['module']} | "
+    out += [f"| {e['date']} | {e['bug_id']} | {e['story']} | {_cell(e['title'])} | {e['severity']} | {e['module']} | "
             f"{e['root_cause']} | {_cell(e['five_whys']) or 'missing'} | {_cell(e['found_by'])} |"
             for e in m["escaped"]] or ["| none | | | | | | | | |"]
     out += ["", "## Process audit (automatic)", "| Check | Result | Evidence |", "|---|---|---|"]

@@ -1,4 +1,4 @@
-"""Quality metrics for one CR: KPIs, Pareto analysis and severity distribution.
+"""Quality metrics for one story: KPIs, Pareto analysis and severity distribution.
 
 Plain Python, no LLM. Based on classic quality-control tools:
 - KPIs (key performance indicators) to measure the test process and the product.
@@ -45,7 +45,7 @@ def compute_quality(rows: list, requirement_ids: list, gaps: list, matrix: list)
     scenarios_covered = sum(m["scenarios_covered"] for m in matrix)
 
     kpis = [
-        ("Requirements coverage", _pct(len(covered), len(requirement_ids)), "CR requirements that have test cases"),
+        ("Requirements coverage", _pct(len(covered), len(requirement_ids)), "Story requirements that have test cases"),
         ("Scenario coverage", _pct(scenarios_covered, scenarios_total),
          "Analysed test scenarios that have at least one test case"),
         ("Execution rate", _pct(len(executed), total), "Test cases executed out of all test cases"),
@@ -56,7 +56,7 @@ def compute_quality(rows: list, requirement_ids: list, gaps: list, matrix: list)
         ("POT evidence complete", _pct(with_evidence, len(passed_or_failed)),
          "Passed/failed cases with a screenshot reference"),
         ("Critical + major share", _pct(serious, len(failed)), "Failed cases with critical or major severity"),
-        ("Requirement gaps found early", str(len(gaps)), "Questions raised in CR analysis (defects prevented)"),
+        ("Requirement gaps found early", str(len(gaps)), "Questions raised in story analysis (defects prevented)"),
         ("Requirement gaps resolved", _pct(resolved_gaps, len(gaps)), "Gaps answered or closed by the BA/dev team"),
         ("Bug rejection rate", _pct(rejected, len(tracked)), "Reported bugs rejected (lower = clearer bug reports)"),
         ("Bug reopen rate", _pct(reopened, len(tracked)), "Fixed bugs that failed retest"),

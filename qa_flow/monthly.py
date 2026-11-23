@@ -3,12 +3,12 @@
   python3 run.py monthly [--month 2026-11]
 
 Inputs
-- every CR run whose report finished in that month (runs/<id>/artifacts/report_data.json)
-- projects/zatca/escaped_defects.csv: bugs found after release (by UAT, users or production).
+- every story run whose report finished in that month (runs/<id>/artifacts/report_data.json)
+- workspace/escaped_defects.csv: bugs found after release (by UAT, users or production).
   You keep this file; it is created empty the first time. Every escaped defect needs a root cause
   (fishbone category) and a 5 Whys analysis.
 
-Output (projects/zatca/monthly/<month>/): monthly_report.md, monthly.xlsx and metrics.json.
+Output (workspace/monthly/<month>/): monthly_report.md, monthly.xlsx and metrics.json.
 It includes KPIs with the change from last month, defect leakage, a control chart of defects
 per build, Pareto by module and root cause, and an automatic process audit (ISO 19011 style).
 """
@@ -22,7 +22,7 @@ from pathlib import Path
 from .quality import _pct, pareto
 from .results import ROOT_CAUSES, SEVERITIES
 
-ESCAPED_COLUMNS = ["date", "bug_id", "cr", "title", "severity", "module", "root_cause", "five_whys", "found_by", "notes"]
+ESCAPED_COLUMNS = ["date", "bug_id", "story", "title", "severity", "module", "root_cause", "five_whys", "found_by", "notes"]
 
 
 # ---- inputs ---------------------------------------------------------------
@@ -118,11 +118,11 @@ def month_metrics(reports: list, escaped: list) -> dict:
         return {"kpi": name, "value": value, "meaning": meaning}
 
     kpis = [
-        kpi("CRs reported", str(len({rep.get("cr", rep["run_id"]) for rep in reports})),
-            "Change Requests with a finished test report this month"),
+        kpi("User stories reported", str(len({rep.get("story", rep["run_id"]) for rep in reports})),
+            "User stories with a finished test report this month"),
         kpi("Test cases executed", str(len(executed)), "Across all runs"),
         kpi("Pass rate", _pct(sum(1 for r in executed if r["status"] == "Pass"), len(executed)), "Passed out of executed"),
-        kpi("Requirements coverage", _pct(covered, len(reqs)), "CR requirements with test cases"),
+        kpi("Requirements coverage", _pct(covered, len(reqs)), "Story requirements with test cases"),
         kpi("POT evidence complete", _pct(sum(1 for r in passed_or_failed if r.get("evidence")), len(passed_or_failed)),
             "Passed/failed cases with a screenshot reference"),
         kpi("Defects found in testing", str(found), "Unique bugs from failed cases"),
@@ -169,7 +169,7 @@ def audit(metrics: dict, unfinished: list) -> list:
     return [
         check("Every run of the month has a finished report", not unfinished,
               "unfinished: " + ", ".join(unfinished) if unfinished else "all runs reported"),
-        check("Every CR requirement has test cases", raw["covered"] == raw["requirements"] if raw["requirements"] else None,
+        check("Every story requirement has test cases", raw["covered"] == raw["requirements"] if raw["requirements"] else None,
               f"{raw['covered']}/{raw['requirements']} requirements covered"),
         check("Every executed case has POT evidence", raw["evidence_missing"] == 0 if raw["failed"] or raw["covered"] else None,
               f"{raw['evidence_missing']} executed case(s) without a screenshot reference"),

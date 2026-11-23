@@ -1,7 +1,7 @@
 """The results file you fill in after running the test cases manually (results.csv).
 
 It also feeds the POT (proof of testing): every executed case needs a screenshot reference and,
-where the flow creates them, reference / message numbers (manifest, B/L, declaration, EDI message...).
+where the flow creates them, reference / message numbers (order, transaction, request or message IDs...).
 """
 import csv
 from pathlib import Path

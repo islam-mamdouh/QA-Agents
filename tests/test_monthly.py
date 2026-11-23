@@ -9,16 +9,16 @@ from qa_flow import monthly
 
 def report(run_id, fails, passes=3, cause="code", build="b1", gaps=()):
     rows = [{"id": f"{run_id}-F{i}", "status": "Fail", "bug_id": f"B-{run_id}-{i}", "root_cause": cause,
-             "severity": "major", "bug_status": "fixed", "module": "Declarations", "build": build, "evidence": "f.png"}
+             "severity": "major", "bug_status": "fixed", "module": "Payments", "build": build, "evidence": "f.png"}
             for i in range(fails)]
-    rows += [{"id": f"{run_id}-P{i}", "status": "Pass", "module": "EDI", "build": build, "evidence": "p.png"}
+    rows += [{"id": f"{run_id}-P{i}", "status": "Pass", "module": "Notifications", "build": build, "evidence": "p.png"}
              for i in range(passes)]
-    return {"run_id": run_id, "cr": f"CR-{run_id}", "rows": rows, "gaps": list(gaps),
+    return {"run_id": run_id, "story": f"story-{run_id}", "rows": rows, "gaps": list(gaps),
             "matrix": [{"requirement": "R1", "coverage": "Passed"}, {"requirement": "R2", "coverage": "Not covered"},
                        {"requirement": "REG", "coverage": "Passed"}]}
 
 
-ESCAPED = [{"date": "2026-11-20", "bug_id": "P-1", "cr": "CR-9", "title": "t", "severity": "critical",
+ESCAPED = [{"date": "2026-11-20", "bug_id": "P-1", "story": "US-9", "title": "t", "severity": "critical",
             "module": "Release", "root_cause": "requirements", "five_whys": "", "found_by": "UAT", "notes": ""}]
 
 
@@ -37,16 +37,16 @@ class MonthlyTest(unittest.TestCase):
     def test_leakage_pareto_and_audit(self):
         m = monthly.month_metrics([report("20261102-1", 2), report("20261110-1", 1)], ESCAPED)
         kpis = {k["kpi"]: k["value"] for k in m["kpis"]}
-        self.assertEqual(kpis["CRs reported"], "2")
+        self.assertEqual(kpis["User stories reported"], "2")
         self.assertEqual(kpis["Defects found in testing"], "3")
         self.assertEqual(kpis["Defect leakage"], "25.0%")
         self.assertEqual(kpis["Defect detection effectiveness"], "75.0%")
         self.assertEqual(kpis["Requirements coverage"], "50.0%")  # REG is not a requirement
         self.assertEqual(kpis["POT evidence complete"], "100.0%")
-        self.assertEqual(m["pareto_by_module"][0]["item"], "Declarations")
+        self.assertEqual(m["pareto_by_module"][0]["item"], "Payments")
         checks = {a["check"]: a["result"] for a in monthly.audit(m, ["20261115-1"])}
         self.assertEqual(checks["Every run of the month has a finished report"], "No")
-        self.assertEqual(checks["Every CR requirement has test cases"], "No")
+        self.assertEqual(checks["Every story requirement has test cases"], "No")
         self.assertEqual(checks["Every executed case has POT evidence"], "Yes")
         self.assertEqual(checks["Root cause recorded for at least 95% of failed cases"], "Yes")
         self.assertEqual(checks["Every escaped defect has a root cause and a 5 Whys analysis"], "No")
@@ -56,7 +56,7 @@ class MonthlyTest(unittest.TestCase):
         monthly.ensure_escaped_file(path)
         self.assertEqual(monthly.read_escaped(path), [])
         self.assertIn("five_whys", path.read_text(encoding="utf-8-sig"))
-        path.write_text(path.read_text(encoding="utf-8-sig") + "20/11/2026,B,CR-1,t,major,M,code,,UAT,\n",
+        path.write_text(path.read_text(encoding="utf-8-sig") + "20/11/2026,B,US-1,t,major,M,code,,UAT,\n",
                         encoding="utf-8-sig")
         with self.assertRaises(ValueError):
             monthly.read_escaped(path)
@@ -68,8 +68,8 @@ class MonthlyTest(unittest.TestCase):
     def test_build_with_trend_and_excel_without_agent(self):
         project = temp_dir()
         runs = project / "runs"
-        for run_id, data in (("20261020-090000-CR-1", report("20261020-090000-CR-1", 4)),
-                             ("20261105-090000-CR-2", report("20261105-090000-CR-2", 1))):
+        for run_id, data in (("20261020-090000-US-1", report("20261020-090000-US-1", 4)),
+                             ("20261105-090000-US-2", report("20261105-090000-US-2", 1))):
             (runs / run_id / "artifacts").mkdir(parents=True)
             (runs / run_id / "artifacts" / "report_data.json").write_text(json.dumps(data))
         out = monthly.build_monthly(base_cfg(runs), "2026-11", use_agent=False)

@@ -1,8 +1,8 @@
 """Requirements traceability matrix (RTM) and the requirement gaps log.
 
-RTM: every CR requirement -> its scenarios -> test cases -> results -> POT evidence -> bugs
+RTM: every story requirement -> its scenarios -> test cases -> results -> POT evidence -> bugs
 (ISO 9001 style traceability, plan-do-check-act).
-Gaps: the questions raised while analysing the CR, kept in requirement_gaps.csv so you can send
+Gaps: the questions raised while analysing the story, kept in requirement_gaps.csv so you can send
 them to the BA/dev team before development finishes and record the answers. Each gap caught
 here is a defect prevented (QA, not only QC).
 """
@@ -24,8 +24,8 @@ GAP_SHEET_COLUMNS = [("Gap ID", "gap_id", 18), ("Requirement", "requirement", 12
 
 
 # ---- gaps -----------------------------------------------------------------
-def collect_gaps(cr_id: str, questions: list) -> list:
-    return [{"gap_id": f"{cr_id}-Q{n:02d}", "requirement": q.get("requirement", ""), "question": q.get("question", ""),
+def collect_gaps(story_id: str, questions: list) -> list:
+    return [{"gap_id": f"{story_id}-Q{n:02d}", "requirement": q.get("requirement", ""), "question": q.get("question", ""),
              "confirm_with": q.get("confirm_with", "BA"), "status": "open", "answer": "",
              "raised": date.today().isoformat()}
             for n, q in enumerate(questions, 1) if q.get("question")]
@@ -77,7 +77,7 @@ def _coverage(case_count: int, counts: dict | None) -> str:
 
 
 def build_matrix(requirements: list, cases: list, results: dict | None = None, gaps: list | None = None) -> list:
-    """One row per CR requirement. `results` (test case id -> result) is None before execution."""
+    """One row per story requirement. `results` (test case id -> result) is None before execution."""
     matrix = []
     for req in requirements:
         rid = req["id"]
